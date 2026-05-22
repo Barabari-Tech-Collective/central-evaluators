@@ -21,6 +21,9 @@ export async function routeEvaluation(payload) {
     case 'python':
       return queues.python.add('python-job', payload);
 
+    case 'fullstack':
+      return queues.fullstack.add('fullstack-job', payload);
+
     default:
       throw new Error('Invalid evaluator type');
   }

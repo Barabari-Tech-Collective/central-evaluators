@@ -1,11 +1,9 @@
 // src/controllers/evaluationController.js
 
-import { routeEvaluation } from "../router/evaluationRouter.js";
+import { routeEvaluation } from '../router/evaluationRouter.js';
 
 export async function evaluate(req, res) {
-
   try {
-
     const payload = req.body;
 
     const job = await routeEvaluation(payload);
@@ -13,16 +11,14 @@ export async function evaluate(req, res) {
     return res.json({
       success: true,
       jobId: job.id,
-      queue: payload.type
+      queue: payload.type,
     });
-
   } catch (err) {
-
     console.error(err);
 
     return res.status(500).json({
       success: false,
-      error: err.message
+      error: err.message,
     });
   }
 }

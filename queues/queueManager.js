@@ -21,5 +21,9 @@ export const queues = {
 
   python: new Queue('python-evaluation', {
     connection: redisConnection
+  }),
+
+  fullstack: new Queue('fullstack-evaluation', {
+    connection: redisConnection
   })
 };

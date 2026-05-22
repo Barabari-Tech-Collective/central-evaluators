@@ -1,7 +1,7 @@
 // reactWorker.js
 
 import { Worker } from 'bullmq';
-import { redisConnection } from '../redis.js';
+import { redisConnection } from '../queues/redis.js';
 import { evaluateReactProject } from '../evaluators/react/evaluatorService.js';
 
 new Worker(
