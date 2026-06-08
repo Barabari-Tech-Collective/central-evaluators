@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 
-import { redisConnection } from '../../queues/redis.js';
+import { redisConnection } from '../queues/redis.js';
 
 import { evaluateStudentsWithVision } from '../evaluators/visual/evaluatorService.js';
 

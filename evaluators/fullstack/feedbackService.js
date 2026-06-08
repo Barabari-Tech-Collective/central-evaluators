@@ -1,0 +1,69 @@
+import OpenAI from "openai";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const client = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
+});
+
+export async function generateFullstackFeedback(backendResults, frontendResults, rubric) {
+  if (!process.env.GROQ_API_KEY) {
+    return "AI-generated feedback is currently unavailable.";
+  }
+
+  const backendFailures = backendResults.test_details.filter((t) => t.status === "fail");
+  const frontendFailures = frontendResults.test_details.filter((t) => t.status === "fail");
+
+  if (backendFailures.length === 0 && frontendFailures.length === 0) {
+    return "Excellent work! Both your backend API and frontend UI passed all tests. Your fullstack implementation is solid — keep it up!";
+  }
+
+  const formatFailures = (failures, layer) =>
+    failures
+      .map(
+        (f) => `[${layer}] Test: ${f.name}\n  Error: ${f.error?.slice(0, 250) ?? "Unknown error"}`
+      )
+      .join("\n");
+
+  const failureContext = [
+    backendFailures.length ? formatFailures(backendFailures, "Backend") : "",
+    frontendFailures.length ? formatFailures(frontendFailures, "Frontend") : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const prompt = `
+You are an encouraging Senior Fullstack Developer performing a code review for a student.
+Below are the failed tests from an automated evaluation of their fullstack project.
+
+### Failed Tests:
+${failureContext}
+
+### Rubric:
+${rubric.criteria.map((c) => `- [${c.layer ?? "general"}] ${c.name} (weight: ${c.weight})`).join("\n")}
+
+### Instructions:
+1. Give brief (3-5 sentences) technical advice covering both backend and frontend issues.
+2. Be specific about root causes — don't just say "check logs".
+3. Maintain an encouraging, senior developer tone.
+4. Do not include PII or sensitive system data.
+
+Your response:
+`;
+
+  try {
+    const completion = await client.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.1-8b-instant",
+      max_tokens: 400,
+      temperature: 0.7,
+    });
+
+    return completion.choices[0].message.content.trim();
+  } catch (err) {
+    console.error("[FullstackFeedback] Groq error:", err.message);
+    return "AI feedback is temporarily unavailable. Please review the test details above for hints.";
+  }
+}

@@ -1,44 +1,30 @@
-import { Worker } from "bullmq";
+import { Worker } from 'bullmq';
 
-import {
-  redisConnection
-} from "../queues/redis.js";
+import { redisConnection } from '../queues/redis.js';
 
-import { evaluateBackendProject }
-from "../../evaluators/backend/evaluator.js";
+import { evaluateBackendProject } from '../evaluators/backend/evaluatorService.js';
 
 const backendWorker = new Worker(
-
-  "backend-evaluation",
+  'backend-evaluation',
 
   async (job) => {
+    console.log(`[BackendWorker] Processing ${job.id}`);
 
-    console.log(
-      `[BackendWorker] Processing ${job.id}`
-    );
-
-    return await evaluateBackendProject(
-      job.data
-    );
+    return await evaluateBackendProject(job.data);
   },
 
   {
     connection: redisConnection,
-    concurrency: 5
-  }
+    concurrency: 5,
+  },
 );
 
-backendWorker.on("completed", (job) => {
-  console.log(
-    `[BackendWorker] Completed ${job.id}`
-  );
+backendWorker.on('completed', (job) => {
+  console.log(`[BackendWorker] Completed ${job.id}`);
 });
 
-backendWorker.on("failed", (job, err) => {
-  console.error(
-    `[BackendWorker] Failed ${job?.id}`,
-    err.message
-  );
+backendWorker.on('failed', (job, err) => {
+  console.error(`[BackendWorker] Failed ${job?.id}`, err.message);
 });
 
 export default backendWorker;
