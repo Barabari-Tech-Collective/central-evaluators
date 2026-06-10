@@ -13,7 +13,15 @@ export async function cloneRepo(repoUrl) {
   const repoName = `repo_${Date.now()}`;
   const repoPath = path.join(TEMP_DIR, repoName);
 
-  execSync(`git clone ${repoUrl} ${repoPath}`);
+  if (!repoUrl) {
+  throw new Error('repoUrl is required');
+  }
+
+  execSync(`git clone ${repoUrl} ${repoPath}`,
+     {
+    stdio: 'pipe'
+  }
+  );
 
   return repoPath;
 }

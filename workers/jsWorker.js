@@ -22,15 +22,38 @@ export async function initializeJsWorker() {
       async (job) => {
         try {
           logger.info(`Starting JS evaluation: ${job.id}`);
-          const { repoUrl } = job.data;
-
-          const repoPath = await cloneRepo(repoUrl);
-
-          const students = findJavaScriptFiles(repoPath);
-
-          const results = await evaluateAll(students);
-
+          // const { repoUrl } = job.data;
+          // const repoPath = await cloneRepo(repoUrl);
+          // const students = findJavaScriptFiles(repoPath);
+          // const results = await evaluateAll(students);
           // const results = await evaluateJavaScript(job.data);
+          const {
+  submissions,
+  testCases
+} = job.data;
+
+const results = [];
+
+for (const submission of submissions) {
+
+  const repoPath =
+    await cloneRepo(submission.repoUrl);
+
+  const students =
+    findJavaScriptFiles(repoPath);
+
+  const evaluation =
+    await evaluateAll(
+      students,
+      testCases
+    );
+
+  results.push({
+    studentId: submission.studentId,
+    studentName: submission.studentName,
+    evaluation
+  });
+}
           logger.info(`JS Job ${job.id} completed`);
           return { success: true, results };
         } catch (err) {
