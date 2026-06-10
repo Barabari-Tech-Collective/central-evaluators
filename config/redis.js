@@ -8,9 +8,11 @@ dotenv.config();
 const redisConfig = {
   host: process.env.REDIS_HOST || '127.0.0.1',
   port: parseInt(process.env.REDIS_PORT) || 6379,
+  username: parseInt(process.env.REDIS_USERNAME) || 0,
   password: process.env.REDIS_PASSWORD || undefined,
-  db: parseInt(process.env.REDIS_USERNAME) || 0,
-  
+  tls: {},
+  connectTimeout: 30000,
+  commandTimeout: 30000,
   // Connection options
   retryStrategy: (times) => {
     const delay = Math.min(times * 50, 2000);
@@ -24,10 +26,6 @@ const redisConfig = {
   
   // Performance options
   lazyConnect: false,
-  
-  // Timeout settings
-  connectTimeout: 10000,
-  commandTimeout: 5000,
 };
 
 class RedisConnection {
