@@ -10,7 +10,7 @@ const redisConfig = {
   port: parseInt(process.env.REDIS_PORT) || 6379,
   username: parseInt(process.env.REDIS_USERNAME) || 0,
   password: process.env.REDIS_PASSWORD || undefined,
-  tls: {},
+ 
   connectTimeout: 30000,
   commandTimeout: 30000,
   // Connection options
