@@ -1,4 +1,4 @@
-import logger from '../utils/logger.js';
+import logger from '../../config/logger.js';
 
 /**
  * Calculates the final score based on the rubric criteria and test results.

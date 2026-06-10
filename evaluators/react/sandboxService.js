@@ -1,87 +1,256 @@
-import fs from 'fs';
-import { Sandbox } from '@e2b/code-interpreter';
+import fs from "fs";
+import path from "path";
+import { Sandbox } from "@e2b/code-interpreter";
+
+const IGNORE_DIRS = [
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "coverage",
+  ".next"
+];
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 /**
- * Spins up an isolated E2B cloud sandbox and uploads the student's project zip.
- *
- * @param {string} zipPath  - Absolute path to the local zip file
- * @returns {Promise<{ sandbox: unknown, appUrl: string }>}
+ * Recursively uploads a local project directory
+ * into the E2B sandbox.
  */
-export async function spinTestEnvironment(zipPath) {
-  // Create an E2B Sandbox using the default template
-  // Setting a longer timeout if needed (default 5 mins), but we kill it manually anyway
-  const sandbox = await Sandbox.create();
-  
-  // Upload the zip file into the sandbox
-  const zipBuffer = await fs.promises.readFile(zipPath);
-  await sandbox.files.write("/home/user/app.zip", zipBuffer);
-  
-  // Extract the zip into /home/user/app. Unzip returns 1 for warnings (like extra bytes), which causes E2B to throw.
+async function uploadDirectory(
+  sandbox,
+  localDir,
+  remoteDir
+) {
+
+  const entries = await fs.promises.readdir(
+    localDir,
+    { withFileTypes: true }
+  );
+
+  await sandbox.commands.run(
+    `mkdir -p "${remoteDir}"`
+  );
+
+  for (const entry of entries) {
+
+    // Skip heavy folders
+    if (
+      entry.isDirectory() &&
+      IGNORE_DIRS.includes(entry.name)
+    ) {
+      continue;
+    }
+
+    const localPath = path.join(
+      localDir,
+      entry.name
+    );
+
+    const remotePath =
+      `${remoteDir}/${entry.name}`;
+
+    if (entry.isDirectory()) {
+
+      await uploadDirectory(
+        sandbox,
+        localPath,
+        remotePath
+      );
+
+      continue;
+    }
+
+    const stat =
+      await fs.promises.stat(localPath);
+
+    // Skip very large files
+    if (stat.size > MAX_FILE_SIZE) {
+      console.log(
+        `Skipping large file: ${localPath}`
+      );
+      continue;
+    }
+
+    const buffer =
+      await fs.promises.readFile(localPath);
+
+    await sandbox.files.write(
+      remotePath,
+      buffer
+    );
+  }
+}
+
+/**
+ * Creates an E2B sandbox and uploads
+ * the cloned repository into it.
+ *
+ * @param {string} projectPath
+ */
+export async function spinTestEnvironment(
+  projectPath
+) {
+
+  const sandbox =
+    await Sandbox.create();
+
   try {
-    await sandbox.commands.run("mkdir -p /home/user/app && unzip -o /home/user/app.zip -d /home/user/app");
-  } catch (e) {
-    console.log("Ignored unzip warning/error:", e.message);
-    // If it's a real failure (not just a warning), the npm install step will gracefully fail later.
-  }
-  
-  // The React app serves on port 3000
-  const hostUrl = sandbox.getHost(3000);
-  
-  // Find the exact directory containing package.json in case it is inside a nested folder (GitHub exports)
-  const findCmd = await sandbox.commands.run("find /home/user/app -maxdepth 2 -name 'package.json' | head -n 1");
-  let projectDir = "/home/user/app";
-  if (!findCmd.error && findCmd.stdout.trim()) {
-    projectDir = findCmd.stdout.trim().replace(/\/package\.json$/, "");
-    console.log("Detected project directory with package.json:", projectDir);
-  }
 
-  // Note: Playwright can navigate to this public URL
-  return { sandbox, appUrl: `https://${hostUrl}`, projectDir };
-}
+    await uploadDirectory(
+      sandbox,
+      projectPath,
+      "/home/user/app"
+    );
 
-/**
- * Runs a shell command inside the sandbox and returns stdout+stderr as a string.
- * @param {unknown} sandbox   - E2B Sandbox instance
- * @param {string} command    - Shell command to run
- * @param {string} cwd        - Working directory inside the sandbox
- * @returns {Promise<string>}
- */
-export async function execCommand(sandbox, command, cwd = "/home/user/app") {
-  // We run all commands inside the extracted directory with a generous 5-minute timeout
-  const result = await sandbox.commands.run(command, { cwd, timeoutMs: 300000 });
-  
-  if (result.error) {
-    throw new Error(result.error.message || result.stderr || "Command execution failed");
-  }
-  
-  return (result.stdout + "\n" + result.stderr).trim();
-}
+    const hostUrl =
+      await sandbox.getHost(3000);
 
-/**
- * Runs a command in the background (detached), so it stays alive even after 
- * this execution session closes (crucial for long-running servers).
- * @param {unknown} sandbox - E2B Sandbox instance
- * @param {string} command - Shell command to run
- * @param {string} cwd - Working directory inside the sandbox
- */
-export async function execCommandDetached(sandbox, command, cwd = "/home/user/app") {
-  await sandbox.commands.run(command, { cwd, background: true });
-}
+    const findCmd =
+      await sandbox.commands.run(
+        "find /home/user/app -maxdepth 3 -name 'package.json' | head -n 1"
+      );
 
-/**
- * Automatically kills the sandbox after the specified timeout (ms).
- * Prevents runaway processes from consuming host resources.
- *
- * @param {unknown} sandbox   - E2B Sandbox instance
- * @param {number} timeout    - Timeout in milliseconds (default: 120s)
- */
-export async function enforceTimeout(sandbox, timeout = 120000) {
-  setTimeout(async () => {
+    let projectDir =
+      "/home/user/app";
+
+    if (
+      findCmd.exitCode === 0 &&
+      findCmd.stdout.trim()
+    ) {
+
+      projectDir =
+        findCmd.stdout
+          .trim()
+          .replace(
+            /\/package\.json$/,
+            ""
+          );
+
+      console.log(
+        "Detected project directory:",
+        projectDir
+      );
+    }
+
+    return {
+      sandbox,
+      appUrl: `https://${hostUrl}`,
+      projectDir
+    };
+
+  } catch (err) {
+
     try {
       await sandbox.kill();
-      console.log("Sandbox killed due to timeout.");
-    } catch {
-      // Sandbox may have already stopped — silently ignore
+    } catch {}
+
+    throw err;
+  }
+}
+
+/**
+ * Execute command inside sandbox.
+ */
+export async function execCommand(
+  sandbox,
+  command,
+  cwd = "/home/user/app"
+) {
+
+  const result =
+    await sandbox.commands.run(
+      command,
+      {
+        cwd,
+        timeout: 300000
+      }
+    );
+
+  if (
+    result.exitCode !== 0
+  ) {
+
+    throw new Error(
+      result.stderr ||
+      result.stdout ||
+      "Command failed"
+    );
+  }
+
+  return [
+    result.stdout,
+    result.stderr
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * Execute command in background.
+ */
+export async function execCommandDetached(
+  sandbox,
+  command,
+  cwd = "/home/user/app"
+) {
+
+  await sandbox.commands.run(
+    command,
+    {
+      cwd,
+      background: true
     }
-  }, timeout);
+  );
+}
+
+/**
+ * Auto terminate sandbox
+ * after timeout.
+ */
+export function enforceTimeout(
+  sandbox,
+  timeout = 120000
+) {
+
+  const timer = setTimeout(
+    async () => {
+
+      try {
+
+        await sandbox.kill();
+
+        console.log(
+          "Sandbox killed due to timeout."
+        );
+
+      } catch {}
+    },
+    timeout
+  );
+
+  return timer;
+}
+
+/**
+ * Safe cleanup helper.
+ */
+export async function destroySandbox(
+  sandbox
+) {
+
+  if (!sandbox) return;
+
+  try {
+
+    await sandbox.kill();
+
+  } catch (err) {
+
+    console.error(
+      "Failed to destroy sandbox:",
+      err.message
+    );
+  }
 }

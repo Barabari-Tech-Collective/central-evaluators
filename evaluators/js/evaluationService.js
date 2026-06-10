@@ -1,5 +1,5 @@
 import fs from 'fs';
-import testCases from '../config/testCases.js';
+import testCases from '../../config/testCases.js';
 import { runJavaScript } from './executionService.js';
 
 export async function evaluateStudent(student) {

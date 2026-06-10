@@ -6,8 +6,8 @@ import detectLanguage from "./utils/detectLanguage.js";
 import runJestEvaluation from "./runners/jestRunner.js";
 import runPytestEvaluation from "./runners/pytestRunner.js";
 
-import scoreSubmission from "./scoringService.js";
-import generateFeedback from "./feedbackService.js";
+import { evaluateResults } from "./scoringService.js";
+import getAiFeedback from "./feedbackService.js";
 
 export async function evaluateBackendProject(payload) {
 
@@ -36,13 +36,13 @@ export async function evaluateBackendProject(payload) {
   }
 
   // 5. Score
-  const score = await scoreSubmission(
+  const score = await evaluateResults(
     testResults,
     payload.rubric
   );
 
   // 6. Feedback
-  const feedback = await generateFeedback(
+  const feedback = await getAiFeedback(
     testResults,
     payload.rubric
   );

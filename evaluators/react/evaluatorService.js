@@ -1,23 +1,20 @@
-// import extractSubmission from "./extractService";
-import { cloneRepo } from "./repoService";
-import runPlaywrightTests from "./playwrightTests";
-import scoreSubmission from "./scoringService";
-import {createSandbox} from "./sandboxService";
+import { cloneRepo } from "./repoService.js";
+import runTests from "./playwrightService.js";
+import scoreSubmission from "./scoringService.js";
 
+export async function evaluateReactProject(
+  payload
+) {
 
-export async function evaluateReactProject(payload) {
+  const repoPath =
+    await cloneRepo(payload.repoUrl);
 
-  const repoPath = await cloneRepo(payload.repoUrl)
+  const testResults =
+    await runTests(repoPath);
 
- 
-  const sandbox = await createSandbox(repoPath);
-
-  const testResults = await runPlaywrightTests(sandbox);
-
-  const score = await scoreSubmission(
+  return await scoreSubmission(
     testResults,
-    payload.rubric
+    payload.rubric,
+    repoPath
   );
-
-  return score;
 }

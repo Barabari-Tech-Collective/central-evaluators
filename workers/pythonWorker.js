@@ -1,45 +1,91 @@
-// src/workers/pythonWorker.js
+import { Worker } from 'bullmq';
+import redisConnection from '../config/redis.js';
+import queueManager from '../config/queueManager.js';
+import logger from '../config/logger.js';
+// import { evaluateJavaScript } from '../evaluators/javascript/evaluatorService.js';
+import { cloneRepo } from "../evaluators/python/repoService.js";
+import { findPythonFiles } from "../evaluators/python/fileService.js";
+import { evaluateAll } from "../evaluators/python/evaluator.js";
 
-import { Worker } from "bullmq";
-import { redisConnection } from "../queues/redis.js";
+let pythonWorker = null;
 
-import { cloneRepo } from "../evaluators/python/services/repoService.js";
-import { findPythonFiles } from "../evaluators/python/services/fileService.js";
-import { evaluateAll } from "../evaluators/python/services/evaluatorService.js";
+export async function initializePythonWorker() {
+  try {
+    logger.info('Initializing python Worker...');
 
-const pythonWorker = new Worker(
-  "python-evaluation",
+    const jsQueue = queueManager.getQueue('python');
+    const config = queueManager.getConfig('python');
 
-  async (job) => {
+    pythonWorker = new Worker(
+      'python-evaluation',
+      async (job) => {
+        try {
+          logger.info(`Starting Python evaluation: ${job.id}`);
+          const { repoUrl } = job.data;
+          // 1. Clone repo
+          const repoPath = await cloneRepo(repoUrl);
+          // 2. Find python files
+          const students = findPythonFiles(repoPath);
+          // 3. Evaluate
+          const results = await evaluateAll(students);
+          // const results = await evaluateJavaScript(job.data);
+          logger.info(`Python Job ${job.id} completed`);
+          return { success: true, results };
+        } catch (err) {
+          logger.error(`Python Job ${job.id} failed`, err);
+          throw err;
+        }
+      },
+      {
+        connection: redisConnection.getClient(),
+        concurrency: config.concurrency,
+        settings: {
+          maxStalledCount: 2,
+          lockDuration: 30000,
+          lockRenewTime: 15000
+        }
+      }
+    );
 
-    console.log("Processing Python Job:", job.id);
+    // Event handlers
+    pythonWorker.on('completed', (job, result) => {
+      logger.info(`Python Job ${job.id} completed`, {
+        duration: job.finishedOn - job.processedOn
+      });
+    });
 
-    const { repoUrl } = job.data;
+    pythonWorker.on('failed', (job, err) => {
+      logger.error(`Python Job ${job.id} failed`, {
+        error: err.message,
+        attempts: job.attemptsMade
+      });
+    });
 
-    // 1. Clone repo
-    const repoPath = await cloneRepo(repoUrl);
+    logger.info('Python Worker initialized');
+    return pythonWorker;
 
-    // 2. Find python files
-    const students = findPythonFiles(repoPath);
-
-    // 3. Evaluate
-    const results = await evaluateAll(students);
-
-    console.log("Python Evaluation Completed");
-
-    return results;
-  },
-
-  {
-    connection: redisConnection
+  } catch (err) {
+    logger.error('Failed to initialize Python worker:', err);
+    throw err;
   }
-);
+}
 
-pythonWorker.on("completed", (job) => {
-  console.log(`Job ${job.id} completed`);
-});
+export async function stopPythonWorker() {
+  try {
+    if (pythonWorker) {
+      await pythonWorker.close();
+    }
+    logger.info('Python worker stopped');
+  } catch (err) {
+    logger.error('Error stopping Python worker:', err);
+  }
+}
 
-pythonWorker.on("failed", (job, err) => {
-  console.log(`Job ${job.id} failed`);
-  console.error(err);
-});
+export function getPythonWorkerStatus() {
+  return {
+    status: pythonWorker ? 'running' : 'not_initialized',
+    concurrency: queueManager.getConfig('python').concurrency
+  };
+}
+
+export { pythonWorker };

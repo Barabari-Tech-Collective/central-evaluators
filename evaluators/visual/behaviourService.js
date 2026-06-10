@@ -1,4 +1,4 @@
-async function runBehaviorChecks(page, rubric) {
+export default async function runBehaviorChecks(page, rubric) {
   const results = {};
 
   for (const item of rubric) {

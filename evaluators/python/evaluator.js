@@ -1,7 +1,7 @@
 // src/evaluators/python/services/evaluatorService.js
 
 import { runPython } from "./executionService.js";
-import testCases from "../config/testCases.js";
+import testCases from "../../config/testCases.js";
 
 async function evaluateStudent(student) {
 

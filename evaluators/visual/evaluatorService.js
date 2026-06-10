@@ -1,9 +1,9 @@
-import { cloneGitRepo } from "./repoService";
-import { parseRubricWithSelectors } from "./rubricService";
-import { scanStudentFolders } from "./scannerService";
-import { runDynamicDomChecks } from "./domService";
-import { runBehaviorChecks } from "./behaviourService";
-import { buildVisionPrompt } from "./utils/promptBuilder";
+import { cloneGitRepo } from "./repoService.js";
+import { parseRubricWithSelectors } from "./rubricService.js";
+import { scanStudentFolders } from "./scannerService.js";
+import { runDynamicDomChecks } from "./domService.js";
+import runBehaviorChecks from "./behaviourService.js";
+import  buildVisionPrompt  from "./utils/promptBuilder.js";
 import fs from "fs/promises";
 import { fileURLToPath } from "url";
 import { chromium } from "playwright";

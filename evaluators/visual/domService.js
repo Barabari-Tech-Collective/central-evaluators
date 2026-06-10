@@ -1,4 +1,4 @@
-async function runDynamicDomChecks(page, rubric) {
+export async function runDynamicDomChecks(page, rubric) {
   const results = {};
 
   for (const item of rubric) {

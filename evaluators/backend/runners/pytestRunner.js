@@ -1,6 +1,6 @@
-import { injectPythonTests } from "../injectors/pythonTestInjector.js";
+import { injectPythonTests } from "../injectors/pyTestInjector.js";
 
-export async function runPytestEvaluation(
+export default async function runPytestEvaluation(
   sandbox,
   projectPath,
   rubric

@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
-import logger from './logger.js';
+import logger from '../../config/logger.js';
 
 dotenv.config();
 
@@ -15,7 +15,7 @@ const client = new OpenAI({
  * @param {Object} rubric The rubric used for evaluation
  * @returns {Promise<string>} AI-generated feedback string
  */
-export async function getAiFeedback(testDetails, rubric) {
+export default async function getAiFeedback(testDetails, rubric) {
   if (!process.env.GROQ_API_KEY) {
     return "AI-generated feedback is currently unavailable.";
   }

@@ -1,5 +1,5 @@
-import { generateAIFeedback, evaluateCodeStructure } from "../ai/feedback.js";
-import logger from "../utils/logger.js";
+import { generateAIFeedback, evaluateCodeStructure } from "./utils/aiFeedback.js";
+import logger from "../../config/logger.js";
 
 /**
  * Maps rubric criteria names to testResults keys from playwrightTests.js.

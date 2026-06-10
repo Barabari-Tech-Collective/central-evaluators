@@ -1,30 +1,24 @@
-import { queues } from '../queues/queueManager.js';
+import queueManager from '../config/queueManager.js';
+import logger from '../config/logger.js';
 
 export async function routeEvaluation(payload) {
-
   const { type } = payload;
 
-  switch(type) {
+  // Validate type
+  if (!queueManager.getQueueTypes().includes(type)) {
+    throw new Error(`Invalid evaluator type: ${type}`);
+  }
 
-    case 'react':
-      return queues.react.add('react-job', payload);
+  try {
+    // Add job to appropriate queue
+    const job = await queueManager.addEvaluation(type, payload);
 
-    case 'backend':
-      return queues.backend.add('backend-job', payload);
+    logger.info(`Job routed: ${type}`, { jobId: job.id });
 
-    case 'visual':
-      return queues.visual.add('visual-job', payload);
+    return job;
 
-    case 'javascript':
-      return queues.javascript.add('javascript-job', payload);
-
-    case 'python':
-      return queues.python.add('python-job', payload);
-
-    case 'fullstack':
-      return queues.fullstack.add('fullstack-job', payload);
-
-    default:
-      throw new Error('Invalid evaluator type');
+  } catch (err) {
+    logger.error(`Failed to route evaluation:`, err);
+    throw err;
   }
 }

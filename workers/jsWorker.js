@@ -1,42 +1,93 @@
 import { Worker } from 'bullmq';
-
-import { redisConnection } from '../queues/redis.js';
-
+import redisConnection from '../config/redis.js';
+import queueManager from '../config/queueManager.js';
+import logger from '../config/logger.js';
+// import { evaluateJavaScript } from '../evaluators/javascript/evaluatorService.js';
 import { cloneRepo } from '../evaluators/js/repoService.js';
-
 import { findJavaScriptFiles } from '../evaluators/js/fileService.js';
-
 import { evaluateAll } from '../evaluators/js/evaluationService.js';
 
-const jsWorker = new Worker(
 
-  'javascript-evaluation',
+let jsWorker = null;
 
-  async (job) => {
+export async function initializeJsWorker() {
+  try {
+    logger.info('Initializing JavaScript Worker...');
 
-    console.log('Running JavaScript Evaluation Worker');
+    const jsQueue = queueManager.getQueue('javascript');
+    const config = queueManager.getConfig('javascript');
 
-    const { repoUrl } = job.data;
+    jsWorker = new Worker(
+      'javascript-evaluation',
+      async (job) => {
+        try {
+          logger.info(`Starting JS evaluation: ${job.id}`);
+          const { repoUrl } = job.data;
 
-    const repoPath = await cloneRepo(repoUrl);
+          const repoPath = await cloneRepo(repoUrl);
 
-    const students = findJavaScriptFiles(repoPath);
+          const students = findJavaScriptFiles(repoPath);
 
-    const results = await evaluateAll(students);
+          const results = await evaluateAll(students);
 
-    return results;
-  },
+          // const results = await evaluateJavaScript(job.data);
+          logger.info(`JS Job ${job.id} completed`);
+          return { success: true, results };
+        } catch (err) {
+          logger.error(`JS Job ${job.id} failed`, err);
+          throw err;
+        }
+      },
+      {
+        connection: redisConnection.getClient(),
+        concurrency: config.concurrency,
+        settings: {
+          maxStalledCount: 2,
+          lockDuration: 30000,
+          lockRenewTime: 15000
+        }
+      }
+    );
 
-  {
-    connection: redisConnection
+    // Event handlers
+    jsWorker.on('completed', (job, result) => {
+      logger.info(`JS Job ${job.id} completed`, {
+        duration: job.finishedOn - job.processedOn
+      });
+    });
+
+    jsWorker.on('failed', (job, err) => {
+      logger.error(`JS Job ${job.id} failed`, {
+        error: err.message,
+        attempts: job.attemptsMade
+      });
+    });
+
+    logger.info('JavaScript Worker initialized');
+    return jsWorker;
+
+  } catch (err) {
+    logger.error('Failed to initialize JS worker:', err);
+    throw err;
   }
-);
+}
 
-jsWorker.on('completed', (job) => {
-  console.log(`Job ${job.id} completed`);
-});
+export async function stopJsWorker() {
+  try {
+    if (jsWorker) {
+      await jsWorker.close();
+    }
+    logger.info('JS worker stopped');
+  } catch (err) {
+    logger.error('Error stopping JS worker:', err);
+  }
+}
 
-jsWorker.on('failed', (job, err) => {
-  console.log(`Job ${job.id} failed`);
-  console.error(err);
-});
+export function getJsWorkerStatus() {
+  return {
+    status: jsWorker ? 'running' : 'not_initialized',
+    concurrency: queueManager.getConfig('javascript').concurrency
+  };
+}
+
+export { jsWorker };

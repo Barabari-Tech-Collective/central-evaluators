@@ -1,6 +1,6 @@
 import { injectEvaluatorTests } from "../injectors/testInjector.js";
 
-export async function runJestEvaluation(
+export default async function runJestEvaluation(
   sandbox,
   projectPath,
   rubric
