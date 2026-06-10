@@ -75,7 +75,7 @@ async function startServer() {
     // 6. Start server
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-      logger.info(`✅ API Gateway running on port ${PORT}`);
+      logger.info(`API Gateway running on port ${PORT}`);
     });
 
   } catch (err) {
