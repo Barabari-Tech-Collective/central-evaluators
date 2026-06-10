@@ -1,8 +1,8 @@
 import fs from 'fs';
-import testCases from '../../config/testCases.js';
+// import testCases from '../../config/testCases.js';
 import { runJavaScript } from './executionService.js';
 
-export async function evaluateStudent(student) {
+export async function evaluateStudent(student, testCases) {
 
   const studentCode = fs.readFileSync(student.filePath, 'utf-8');
 
@@ -15,7 +15,8 @@ export async function evaluateStudent(student) {
 
     const result = runJavaScript(
       studentCode,
-      test.test
+      test
+      // test.test
     );
 
     if (result.passed) {

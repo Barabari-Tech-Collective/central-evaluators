@@ -72,6 +72,21 @@ async function startServer() {
       }
     });
 
+    app.get('/jobs/:type/:jobId', async (req, res) => {
+  try {
+    const result = await queueManager.getJobStatus(
+      req.params.type,
+      req.params.jobId
+    );
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
     // 6. Start server
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
