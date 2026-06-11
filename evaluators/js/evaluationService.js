@@ -43,13 +43,13 @@ export async function evaluateStudent(student, testCases) {
   };
 }
 
-export async function evaluateAll(students) {
+export async function evaluateAll(students, testCases) {
 
   const results = [];
 
   for (const student of students) {
 
-    const result = await evaluateStudent(student);
+    const result = await evaluateStudent(student, testCases);
 
     results.push(result);
   }

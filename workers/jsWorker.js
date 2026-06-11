@@ -55,6 +55,13 @@ for (const submission of submissions) {
   });
 }
           logger.info(`JS Job ${job.id} completed`);
+          logger.info(
+  `Found ${students.length} students`
+);
+
+logger.info(
+  `Received ${testCases.length} test cases`
+);
           return { success: true, results };
         } catch (err) {
           logger.error(`JS Job ${job.id} failed`, err);
@@ -77,6 +84,10 @@ for (const submission of submissions) {
       logger.info(`JS Job ${job.id} completed`, {
         duration: job.finishedOn - job.processedOn
       });
+      console.log(
+    'RESULT =>',
+    JSON.stringify(result, null, 2)
+  );
     });
 
     jsWorker.on('failed', (job, err) => {

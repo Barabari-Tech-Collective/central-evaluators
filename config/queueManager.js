@@ -204,7 +204,7 @@ class QueueManager {
     try {
       const queue = this.queues[type];
       const job = await queue.getJob(jobId);
-      
+      console.log("JOB FOUND:", job);
       if (!job) {
         return null;
       }
