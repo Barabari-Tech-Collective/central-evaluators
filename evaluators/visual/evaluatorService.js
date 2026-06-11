@@ -8,7 +8,11 @@ import fs from "fs/promises";
 import { fileURLToPath } from "url";
 import { chromium } from "playwright";
 
-export async function evaluateStudentsWithVision({ rubricText, expectedUrl, repoUrl }) {
+export async function evaluateStudentsWithVision({ studentId,
+  studentName,
+  repoUrl,
+  rubricText,
+  expectedUrl }) {
 
   if (!repoUrl || !rubricText || !expectedUrl) {
     throw new Error("Missing required inputs");
@@ -65,7 +69,7 @@ export async function evaluateStudentsWithVision({ rubricText, expectedUrl, repo
       const domResults = await runDynamicDomChecks(page, rubric);
       const behaviorResults = await runBehaviorChecks(page, rubric);
 
-      // ✅ DOM SCORE
+      // DOM SCORE
       let domScore = 0;
 
 for (const item of rubric) {

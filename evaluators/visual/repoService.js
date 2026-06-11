@@ -5,7 +5,16 @@ import util from 'util';
 
 const execPromise = util.promisify(exec);
 
-const STUDENT_DIR = path.join(process.cwd(), 'temp', 'visual_students');
+// const STUDENT_DIR = path.join(process.cwd(), 'temp', 'visual_students');
+const repoName =
+  `visual_${Date.now()}`;
+
+const repoPath =
+  path.join(
+    process.cwd(),
+    'temp',
+    repoName
+  );
 
 export async function cloneGitRepo(gitUrl) {
 
@@ -13,11 +22,23 @@ export async function cloneGitRepo(gitUrl) {
     throw new Error('repoUrl is required');
   }
 
-  if (await fs.stat(STUDENT_DIR).catch(() => false)) {
-    await fs.rm(STUDENT_DIR, { recursive: true });
+  if (await fs.stat(repo_path).catch(() => false)) {
+    await fs.rm(repo_path, { recursive: true });
   }
 
-  await execPromise(`git clone ${gitUrl} ${STUDENT_DIR}`);
+  await execPromise(`git clone ${gitUrl} ${repo_path}`);
 
-  return STUDENT_DIR;
+  return repo_path;
+}
+
+export async function deleteRepo(
+  repoPath
+) {
+  await fs.rm(
+    repoPath,
+    {
+      recursive: true,
+      force: true
+    }
+  );
 }

@@ -15,6 +15,7 @@ import queueManager from '../config/queueManager.js';
 import logger from '../config/logger.js';
 import { getBrowserPool } from '../evaluators/visual/browserPool.js';
 import { evaluateStudentsWithVision } from '../evaluators/visual/evaluatorService.js';
+import { deleteRepo } from '../evaluators/visual/repoService.js';
 
 let visualWorker = null;
 
@@ -88,23 +89,47 @@ async function processVisualJob(job) {
     logger.debug(`Browser pool stats:`, browserPool.getStats());
 
     // Main evaluation logic
-    const results = await evaluateStudentsWithVision({
-      rubricText: jobData.rubricText,
-      expectedUrl: jobData.expectedUrl,
-      repoUrl: jobData.repoUrl
-    });
+    // const results = await evaluateStudentsWithVision({
+    //   rubricText: jobData.rubricText,
+    //   expectedUrl: jobData.expectedUrl,
+    //   repoUrl: jobData.repoUrl
+    // });
+    const {
+  submission,
+  rubricText,
+  expectedUrl
+} = job.data;
+
+const result =
+  await evaluateStudentWithVision({
+    studentId:
+      submission.studentId,
+
+    studentName:
+      submission.studentName,
+
+    repoUrl:
+      submission.repoUrl,
+
+    rubricText,
+    expectedUrl
+  });
 
     logger.info(`Job completed: ${jobId}`, {
       totalStudents: results?.length || 0,
       successCount: results?.filter(r => !r.error)?.length || 0
     });
 
+    // return {
+    //   success: true,
+    //   jobId,
+    //   results,
+    //   timestamp: new Date().toISOString()
+    // };
     return {
-      success: true,
-      jobId,
-      results,
-      timestamp: new Date().toISOString()
-    };
+  success: true,
+  result
+};
 
   } catch (err) {
     logger.error(`Job failed: ${jobId}`, {
@@ -114,7 +139,19 @@ async function processVisualJob(job) {
 
     throw err;  // BullMQ will handle retry
 
+  }finally {
+
+  if (repoUrl) {
+
+    await deleteRepo(
+      repoUrl
+    );
+
+    logger.info(
+      `[VISUAL WORKER] Deleted repo ${repoUrl}`
+    );
   }
+}
 }
 
 /**

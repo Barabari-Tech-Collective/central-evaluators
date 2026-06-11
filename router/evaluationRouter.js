@@ -15,7 +15,7 @@ export async function routeEvaluation(payload) {
     // logger.info(`Job routed: ${type}`, { jobId: job.id });
     // return job;
     if (
-  type === 'javascript' &&
+  ['javascript', 'visual'].includes(type) &&
   payload.submissions
 ) {
 
@@ -26,18 +26,21 @@ export async function routeEvaluation(payload) {
     const job =
       await queueManager.addEvaluation(
         type,
-        {
-          assignmentId:
-            payload.assignmentId,
+      {
+        submission,
 
-          entryFunction:
-            payload.entryFunction,
+        testCases:
+          payload.testCases,
 
-          testCases:
-            payload.testCases,
+        entryFunction:
+          payload.entryFunction,
 
-          submission
-        }
+        rubricText:
+          payload.rubricText,
+
+        expectedUrl:
+          payload.expectedUrl
+      }
       );
 
     jobs.push(job);
