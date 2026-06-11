@@ -212,7 +212,7 @@ class QueueManager {
       return {
         id: job.id,
         state: await job.getState(),
-        progress: job.progress(),
+        progress: job.progress ?? 0,
         data: job.data,
         result: job.returnvalue,
         failedReason: job.failedReason,
