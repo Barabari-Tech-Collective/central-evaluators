@@ -11,11 +11,48 @@ export async function routeEvaluation(payload) {
 
   try {
     // Add job to appropriate queue
-    const job = await queueManager.addEvaluation(type, payload);
+    // const job = await queueManager.addEvaluation(type, payload);
+    // logger.info(`Job routed: ${type}`, { jobId: job.id });
+    // return job;
+    if (
+  type === 'javascript' &&
+  payload.submissions
+) {
 
-    logger.info(`Job routed: ${type}`, { jobId: job.id });
+  const jobs = [];
 
-    return job;
+  for (const submission of payload.submissions) {
+
+    const job =
+      await queueManager.addEvaluation(
+        type,
+        {
+          assignmentId:
+            payload.assignmentId,
+
+          entryFunction:
+            payload.entryFunction,
+
+          testCases:
+            payload.testCases,
+
+          submission
+        }
+      );
+
+    jobs.push(job);
+  }
+
+  return jobs;
+}
+
+const job =
+  await queueManager.addEvaluation(
+    type,
+    payload
+  );
+
+return job;
 
   } catch (err) {
     logger.error(`Failed to route evaluation:`, err);

@@ -16,19 +16,28 @@ export async function evaluate(req, res) {
     }
 
     // Route evaluation
-    const job = await routeEvaluation(payload);
+    const jobs = await routeEvaluation(payload);
 
     logger.info('Evaluation job created', {
-      type: payload.type,
-      jobId: job.id
+      type: payload.type
     });
-
-    return res.json({
-      success: true,
+    if (Array.isArray(jobs)) {
+  return res.json({
+    success: true,
+    jobs: jobs.map(job => ({
       jobId: job.id,
-      queue: payload.type,
-      timestamp: new Date().toISOString()
-    });
+      statusUrl:
+        `/jobs/${payload.type}/${job.id}`
+    }))
+  });
+}
+
+    // return res.json({
+    //   success: true,
+    //   jobId: job.id,
+    //   queue: payload.type,
+    //   timestamp: new Date().toISOString()
+    // });
 
   } catch (err) {
     logger.error('Evaluation error:', err);

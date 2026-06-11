@@ -3,7 +3,7 @@ import redisConnection from '../config/redis.js';
 import queueManager from '../config/queueManager.js';
 import logger from '../config/logger.js';
 // import { evaluateJavaScript } from '../evaluators/javascript/evaluatorService.js';
-import { cloneRepo } from '../evaluators/js/repoService.js';
+import { cloneRepo, deleteRepo } from '../evaluators/js/repoService.js';
 import { findJavaScriptFile } from '../evaluators/js/fileService.js';
 import { evaluateStudent } from '../evaluators/js/evaluationService.js';
 
@@ -20,6 +20,7 @@ export async function initializeJsWorker() {
     jsWorker = new Worker(
       'javascript-evaluation',
       async (job) => {
+        let repoPath;
         try {
           logger.info(`Starting JS evaluation: ${job.id}`);
           // const { repoUrl } = job.data;
@@ -28,33 +29,40 @@ export async function initializeJsWorker() {
           // const results = await evaluateAll(students);
           // const results = await evaluateJavaScript(job.data);
           const {
-  submissions,
+  submission,
   testCases,
   entryFunction
 } = job.data;
 
 const results = [];
 
-for (const submission of submissions) {
-
-  const repoPath =
+  repoPath =
     await cloneRepo(submission.repoUrl);
 
   const filePath =
   findJavaScriptFile(repoPath);
 
 if (!filePath) {
-
-  results.push({
-    studentId: submission.studentId,
-    studentName: submission.studentName,
-    evaluation: {
-      score: 0,
-      error: 'No JavaScript file found'
-    }
-  });
-
-  continue;
+ return {
+    success: true,
+    results: [
+      {
+        studentId: submission.studentId,
+        studentName: submission.studentName,
+        evaluation: {
+          score: 0,
+          error: 'No JavaScript file found'
+        }
+      }
+    ]
+  };
+  // results.push({
+  //   studentId: submission.studentId,
+  //   studentName: submission.studentName,
+  //   evaluation: {
+  //     score: 0,
+  //     error: 'No JavaScript file found'
+  //   }
 }
 const evaluation =
 await evaluateStudent(
@@ -63,11 +71,17 @@ await evaluateStudent(
   entryFunction
 );
 
-results.push({
+// results.push({
+//   studentId: submission.studentId,
+//   studentName: submission.studentName,
+//   evaluation
+// });
+return {
+  success: true,
   studentId: submission.studentId,
   studentName: submission.studentName,
   evaluation
-});
+};
 
 logger.info(
   `[JS WORKER] Processing ${submission.studentName}`
@@ -81,13 +95,19 @@ logger.info(
   logger.info(
     `Received ${testCases.length} test cases`
   );
-}
           logger.info(`JS Job ${job.id} completed`);
 
           return { success: true, results };
         } catch (err) {
           logger.error(`JS Job ${job.id} failed`, err);
           throw err;
+        }finally{
+         if(repoPath){
+          await deleteRepo(repoPath);
+         }
+         logger.info(
+  `[JS WORKER] Deleted temp repo: ${repoPath}`
+);
         }
       },
       {

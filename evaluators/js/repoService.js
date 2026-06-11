@@ -25,3 +25,18 @@ export async function cloneRepo(repoUrl) {
 
   return repoPath;
 }
+
+export function deleteRepo(repoPath) {
+  try {
+    if (fs.existsSync(repoPath)) {
+      fs.rmSync(repoPath, {
+        recursive: true,
+        force: true
+      });
+    }
+  } catch (err) {
+    console.error(
+      `[REPO CLEANUP ERROR] ${err.message}`
+    );
+  }
+}
