@@ -4,8 +4,8 @@ import queueManager from '../config/queueManager.js';
 import logger from '../config/logger.js';
 // import { evaluateJavaScript } from '../evaluators/javascript/evaluatorService.js';
 import { cloneRepo } from '../evaluators/js/repoService.js';
-import { findJavaScriptFiles } from '../evaluators/js/fileService.js';
-import { evaluateAll } from '../evaluators/js/evaluationService.js';
+import { findJavaScriptFile } from '../evaluators/js/fileService.js';
+import { evaluateStudent } from '../evaluators/js/evaluationService.js';
 
 
 let jsWorker = null;
@@ -29,7 +29,8 @@ export async function initializeJsWorker() {
           // const results = await evaluateJavaScript(job.data);
           const {
   submissions,
-  testCases
+  testCases,
+  entryFunction
 } = job.data;
 
 const results = [];
@@ -39,23 +40,44 @@ for (const submission of submissions) {
   const repoPath =
     await cloneRepo(submission.repoUrl);
 
-  const students =
-    findJavaScriptFiles(repoPath);
+  const filePath =
+  findJavaScriptFile(repoPath);
 
-  const evaluation =
-    await evaluateAll(
-      students,
-      testCases
-    );
+if (!filePath) {
 
   results.push({
     studentId: submission.studentId,
     studentName: submission.studentName,
-    evaluation
+    evaluation: {
+      score: 0,
+      error: 'No JavaScript file found'
+    }
   });
-  logger.info(
-  `Found ${students.length} students`
-  );
+
+  continue;
+}
+const evaluation =
+await evaluateStudent(
+  filePath,
+  testCases,
+  entryFunction
+);
+
+results.push({
+  studentId: submission.studentId,
+  studentName: submission.studentName,
+  evaluation
+});
+
+logger.info(
+  `[JS WORKER] Processing ${submission.studentName}`
+);
+logger.info(
+  `[JS WORKER] Found file: ${filePath}`
+);
+logger.info(
+  `[JS WORKER] Entry Function: ${entryFunction}`
+);
   logger.info(
     `Received ${testCases.length} test cases`
   );

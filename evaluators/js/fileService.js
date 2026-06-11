@@ -1,9 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-export function findJavaScriptFiles(rootDir) {
-
-  const students = [];
+export function findJavaScriptFile(rootDir) {
 
   function scan(dir) {
 
@@ -13,27 +11,26 @@ export function findJavaScriptFiles(rootDir) {
 
       const fullPath = path.join(dir, item);
 
-      if (fs.lstatSync(fullPath).isDirectory()) {
+      if (fs.statSync(fullPath).isDirectory()) {
 
-        const jsFiles = fs
-          .readdirSync(fullPath)
-          .filter(file => file.endsWith('.js'));
+        const result = scan(fullPath);
 
-        if (jsFiles.length > 0) {
-
-          students.push({
-            name: item,
-            filePath: path.join(fullPath, jsFiles[0])
-          });
-
-        } else {
-          scan(fullPath);
+        if (result) {
+          return result;
         }
+
+      } else if (item.endsWith('.js')) {
+
+        console.log(
+          `[FILE SERVICE] Found JS file: ${fullPath}`
+        );
+
+        return fullPath;
       }
     }
+
+    return null;
   }
 
-  scan(rootDir);
-
-  return students;
+  return scan(rootDir);
 }
