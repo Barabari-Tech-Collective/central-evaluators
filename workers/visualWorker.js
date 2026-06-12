@@ -75,6 +75,11 @@ async function processVisualJob(job) {
 
   let browserPool = null;
 
+  const {
+    submission,
+    rubricText,
+    expectedUrl
+    } = job.data;
   try {
     logger.info(`Starting visual evaluation job: ${jobId}`);
     
@@ -88,17 +93,12 @@ async function processVisualJob(job) {
       //   expectedUrl: jobData.expectedUrl,
       //   repoUrl: jobData.repoUrl
       // });
-      const {
-        submission,
-        rubricText,
-        expectedUrl
-        } = job.data;
         
         logger.debug(`Job data:`, {
           jobId,
-          repoUrl: jobData.submission.repoUrl,
-          expectedUrl: jobData.expectedUrl,
-          rubricLength: jobData.rubricText?.length
+          repoUrl: submission.repoUrl,
+          expectedUrl,
+          rubricLength: rubricText?.length
         });
 const result =
   await evaluateStudentsWithVision({
@@ -116,8 +116,8 @@ const result =
   });
 
     logger.info(`Job completed: ${jobId}`, {
-      totalStudents: results?.length || 0,
-      successCount: results?.filter(r => !r.error)?.length || 0
+      totalStudents: result?.length || 0,
+      successCount: result?.filter(r => !r.error)?.length || 0
     });
 
     // return {
