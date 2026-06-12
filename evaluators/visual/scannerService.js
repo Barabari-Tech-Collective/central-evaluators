@@ -1,51 +1,37 @@
-import fs from 'fs-extra';
-import path from 'path';
 import { globby } from 'globby';
 
 export async function scanStudentFolders(rootDir) {
 
-  const students = await fs.readdir(rootDir);
-
-  let results = [];
-
-  for (const student of students) {
-
-    if (student.startsWith('.')) continue;
-
-    const studentPath = path.join(rootDir, student);
-
-    const stat = await fs.stat(studentPath);
-
-    if (!stat.isDirectory()) continue;
-
-    const htmlFiles = await globby(['**/*.html'], {
-      cwd: studentPath,
+  const htmlFiles = await globby(
+    ['**/*.html'],
+    {
+      cwd: rootDir,
       absolute: true
-    });
+    }
+  );
 
-    const cssFiles = await globby(['**/*.css'], {
-      cwd: studentPath,
+  const cssFiles = await globby(
+    ['**/*.css'],
+    {
+      cwd: rootDir,
       absolute: true
-    });
-
-    const flags = [];
-
-    if (htmlFiles.length === 0) {
-      flags.push('Missing HTML');
     }
+  );
 
-    if (cssFiles.length === 0) {
-      flags.push('Missing CSS');
-    }
+  const flags = [];
 
-    results.push({
-      name: student,
-      html: htmlFiles[0] || null,
-      css: cssFiles,
-      flags,
-      basePath: studentPath
-    });
+  if (htmlFiles.length === 0) {
+    flags.push('Missing HTML');
   }
 
-  return results;
+  if (cssFiles.length === 0) {
+    flags.push('Missing CSS');
+  }
+
+  return {
+    html: htmlFiles[0] || null,
+    css: cssFiles,
+    flags,
+    basePath: rootDir
+  };
 }

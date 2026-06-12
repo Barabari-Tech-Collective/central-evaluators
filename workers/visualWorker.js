@@ -15,7 +15,7 @@ import queueManager from '../config/queueManager.js';
 import logger from '../config/logger.js';
 import { getBrowserPool } from '../evaluators/visual/browserPool.js';
 import { evaluateStudentsWithVision } from '../evaluators/visual/evaluatorService.js';
-import { deleteRepo } from '../evaluators/visual/repoService.js';
+import { cloneGitRepo, deleteRepo } from '../evaluators/visual/repoService.js';
 
 let visualWorker = null;
 
@@ -72,6 +72,7 @@ export async function initializeVisualWorker() {
 async function processVisualJob(job) {
   const jobId = job.id;
   const jobData = job.data;
+  let repoPath = null;
 
   let browserPool = null;
 
@@ -82,6 +83,9 @@ async function processVisualJob(job) {
     } = job.data;
   try {
     logger.info(`Starting visual evaluation job: ${jobId}`);
+     repoPath = await cloneGitRepo(
+      submission.repoUrl
+    );
     
     // Get browser pool
     browserPool = await getBrowserPool(3);
@@ -108,8 +112,9 @@ const result =
     studentName:
       submission.studentName,
 
-    repoUrl:
-      submission.repoUrl,
+    // repoUrl:
+    //   submission.repoUrl,
+    repoPath,
 
     rubricText,
     expectedUrl
@@ -140,15 +145,14 @@ const result =
     throw err;  // BullMQ will handle retry
 
   }finally {
-  let repoUrl = submission.repoUrl;
-  if (repoUrl) {
+  if (repoPath) {
 
     await deleteRepo(
-      repoUrl
+      repoPath
     );
 
     logger.info(
-      `[VISUAL WORKER] Deleted repo ${repoUrl}`
+      `[VISUAL WORKER] Deleted repo ${repoPath}`
     );
   }
 }

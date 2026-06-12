@@ -1,4 +1,4 @@
-import { cloneGitRepo } from "./repoService.js";
+// import { cloneGitRepo } from "./repoService.js";
 import { parseRubricWithSelectors } from "./rubricService.js";
 import { scanStudentFolders } from "./scannerService.js";
 import { runDynamicDomChecks } from "./domService.js";
@@ -10,20 +10,18 @@ import { chromium } from "playwright";
 
 export async function evaluateStudentsWithVision({ studentId,
   studentName,
-  repoUrl,
+  repoPath,
   rubricText,
   expectedUrl }) {
 
-  if (!repoUrl || !rubricText || !expectedUrl) {
+  if (!repoPath || !rubricText || !expectedUrl) {
     throw new Error("Missing required inputs");
   }
-
-  await cloneGitRepo(repoUrl);
 
   const rubric = await parseRubricWithSelectors(rubricText);
   console.log("this is the actual rubric", rubric);
   console.log("📋 FULL RUBRIC:", JSON.stringify(rubric, null, 2));
-  const students = await scanStudentFolders();
+  const student = await scanStudentFolders(repoPath);
 
   await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
 
@@ -43,9 +41,7 @@ export async function evaluateStudentsWithVision({ studentId,
 
   const results = [];
 
-  for (const student of students) {
-
-    const name = student.name;
+    const name = studentName;
     const url = `${base_url}/student/${encodeURIComponent(name)}`;
 
     if (student.flags.length > 0) {
@@ -200,4 +196,3 @@ for (const item of rubric) {
   );
 
   return results;
-}
