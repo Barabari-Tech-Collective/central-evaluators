@@ -1,4 +1,7 @@
-import OpenAi from "openai"
+import OpenAI from "openai"
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 export async function parseRubricWithSelectors(text) {
 
 //   const prompt = `
