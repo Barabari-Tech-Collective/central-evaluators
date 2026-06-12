@@ -51,7 +51,6 @@ export async function evaluateStudentsWithVision({ studentId,
         feedback: `Missing files: ${student.flags.join(', ')}`,
         manualCorrection: true
       });
-      continue;
     }
 
     const page = await context.newPage();
