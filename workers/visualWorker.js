@@ -77,31 +77,31 @@ async function processVisualJob(job) {
 
   try {
     logger.info(`Starting visual evaluation job: ${jobId}`);
-    logger.debug(`Job data:`, {
-      jobId,
-      repoUrl: jobData.repoUrl,
-      expectedUrl: jobData.expectedUrl,
-      rubricLength: jobData.rubricText?.length
-    });
-
+    
     // Get browser pool
     browserPool = await getBrowserPool(3);
     logger.debug(`Browser pool stats:`, browserPool.getStats());
-
+    
     // Main evaluation logic
     // const results = await evaluateStudentsWithVision({
-    //   rubricText: jobData.rubricText,
-    //   expectedUrl: jobData.expectedUrl,
-    //   repoUrl: jobData.repoUrl
-    // });
-    const {
-  submission,
-  rubricText,
-  expectedUrl
-} = job.data;
-
+      //   rubricText: jobData.rubricText,
+      //   expectedUrl: jobData.expectedUrl,
+      //   repoUrl: jobData.repoUrl
+      // });
+      const {
+        submission,
+        rubricText,
+        expectedUrl
+        } = job.data;
+        
+        logger.debug(`Job data:`, {
+          jobId,
+          repoUrl: jobData.submission.repoUrl,
+          expectedUrl: jobData.expectedUrl,
+          rubricLength: jobData.rubricText?.length
+        });
 const result =
-  await evaluateStudentWithVision({
+  await evaluateStudentsWithVision({
     studentId:
       submission.studentId,
 
@@ -140,7 +140,7 @@ const result =
     throw err;  // BullMQ will handle retry
 
   }finally {
-
+  let repoUrl = submission.repoUrl;
   if (repoUrl) {
 
     await deleteRepo(
