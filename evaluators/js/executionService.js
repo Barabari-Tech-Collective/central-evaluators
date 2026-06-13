@@ -62,18 +62,61 @@ export function runJavaScript({
     // -------------------------
     // SCRIPT MODE
     // -------------------------
-    if (evaluationMode === "script") {
+  
+if (evaluationMode === "script") {
 
-      const passed =
-        JSON.stringify(logs) ===
-        JSON.stringify(expectedLogs);
+  const normalizedActual =
+    logs.map(v => String(v).trim());
 
-      return {
-        passed,
-        actual: logs,
-        expected: expectedLogs
-      };
+  const normalizedExpected =
+    expectedLogs.map(v => String(v).trim());
+
+  let matched = 0;
+
+  const failures = [];
+
+  for (
+    let i = 0;
+    i < normalizedExpected.length;
+    i++
+  ) {
+
+    const expected =
+      normalizedExpected[i];
+
+    const actual =
+      normalizedActual[i];
+
+    if (actual === expected) {
+
+      matched++;
+
+    } else {
+
+      failures.push({
+        logNumber: i + 1,
+        expected,
+        actual
+      });
+
     }
+  }
+
+  return {
+    passed:
+      matched ===
+      normalizedExpected.length,
+
+    matched,
+    total:
+      normalizedExpected.length,
+
+    failures,
+
+    actual: normalizedActual,
+    expected: normalizedExpected
+  };
+}
 
     return {
       passed: false,

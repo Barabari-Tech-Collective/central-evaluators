@@ -13,49 +13,36 @@ export async function generateAIFeedback({
   failures,
   astAnalysis
 }) {
-
   try {
-
     const prompt = `
 You are a senior JavaScript mentor.
-
 Student Score:
 ${score}/100
-
 Passed:
 ${passed}/${total}
-
 AST Analysis:
 ${JSON.stringify(astAnalysis)}
-
 Failures:
 ${JSON.stringify(failures)}
-
 Generate feedback.
-
 Mention:
-
 1. strengths
 2. weaknesses
 3. concepts to revise
 4. next steps
-
 Maximum 120 words.
 `;
 
     const completion =
       await groq.chat.completions.create({
-
         model:
           "llama-3.3-70b-versatile",
-
         messages: [
           {
             role: "user",
             content: prompt
           }
         ],
-
         temperature: 0.3
       });
 

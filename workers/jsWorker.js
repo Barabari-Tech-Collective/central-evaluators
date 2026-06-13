@@ -36,7 +36,7 @@ export async function initializeJsWorker() {
 //   testCases,
 //   entryFunction
 // } = job.data;
-
+console.log("this is the JOB Data", job.data);
 const results = [];
 
   repoPath =

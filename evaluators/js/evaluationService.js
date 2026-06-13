@@ -111,28 +111,37 @@ export async function evaluateStudent({
   // ---------------------
   // SCRIPT MODE
   // ---------------------
-  if (
-    evaluationMode ===
-    "script"
+  if (evaluationMode === "script") {
+
+  const result =
+    runJavaScript({
+      studentCode,
+      evaluationMode,
+      expectedLogs
+    });
+
+  passed =
+    result.matched;
+
+  for (
+    const failure
+    of result.failures
   ) {
 
-    const result =
-      runJavaScript({
-        studentCode,
-        evaluationMode,
-        expectedLogs
-      });
+    failures.push({
+      feedback:
+        `Log ${failure.logNumber}: Expected "${failure.expected}" but got "${failure.actual}"`
+    });
 
-    if (result.passed) {
-      passed = 1;
-    } else {
-      failures.push({
-        feedback:
-          "Console output mismatch"
-      });
-    }
-    testCases = [1];
   }
+
+  testCases =
+    new Array(
+      result.total
+    ).fill(1);
+}
+
+    
 
   const score =
     calculateScore({

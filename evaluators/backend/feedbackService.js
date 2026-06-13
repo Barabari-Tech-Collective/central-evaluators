@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import Grok from "groq-sdk";
 import dotenv from 'dotenv';
 import logger from '../../config/logger.js';
 
@@ -6,7 +7,7 @@ dotenv.config();
 
 const client = new OpenAI({
   apiKey: process.env.GROQ_API_KEY,
-  baseURL: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
+  // baseURL: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
 });
 
 /**
