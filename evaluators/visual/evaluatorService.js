@@ -115,7 +115,7 @@ try {
   url
   );
 
-  const responsePage = await page.goto(url, {timeOut: 30000});
+  const responsePage = await page.goto(url, {timeout: 30000});
 
   console.log(
     "Status:",

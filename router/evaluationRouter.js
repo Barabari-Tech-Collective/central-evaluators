@@ -28,16 +28,18 @@ export async function routeEvaluation(payload) {
         type,
       {
         submission,
-
         testCases:
           payload.testCases,
-
         entryFunction:
           payload.entryFunction,
-
+        functions:
+          payload.functions,
+        evaluationMode:
+          payload.evaluationMode,
+        assignmentId:
+         payload.assignmentId,
         rubricText:
           payload.rubricText,
-
         expectedUrl:
           payload.expectedUrl
       }

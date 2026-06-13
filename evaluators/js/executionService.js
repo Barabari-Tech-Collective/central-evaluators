@@ -1,55 +1,91 @@
-import { VM } from 'vm2';
+// executionService.js
 
-export function runJavaScript(
+import { VM } from "vm2";
+
+export function runJavaScript({
   studentCode,
+  evaluationMode,
+  entryFunction,
   testCase,
-  entryFunction
-) {
+  expectedLogs
+}) {
+
+  const logs = [];
 
   const vm = new VM({
     timeout: 1000,
-    sandbox: {}
+    sandbox: {
+      console: {
+        log: (...args) => {
+          logs.push(args.join(" "));
+        }
+      }
+    }
   });
-  if (!entryFunction) {
-  throw new Error(
-    'entryFunction is required'
-  );
-}
+
   try {
 
     vm.run(studentCode);
 
-    const input =
-      JSON.stringify(testCase.input);
+    // -------------------------
+    // FUNCTION MODE
+    // -------------------------
+    if (evaluationMode === "function") {
 
-    const expected =
-      JSON.stringify(testCase.expected);
+      if (!entryFunction) {
 
-    const result = vm.run(`
-      // fibonacci(...${input})
-       ${entryFunction}(...${input})
-    `);
+    return {
+      passed: false,
+      error:
+        "entryFunction required for function mode"
+    };
+  }
 
-    if (
-      JSON.stringify(result) === expected
-    ) {
+      const result = vm.run(`
+        ${entryFunction}(
+          ...${JSON.stringify(testCase.input)}
+        )
+      `);
+
+      const passed =
+        JSON.stringify(result) ===
+        JSON.stringify(testCase.expected);
+
       return {
-        passed: true,
-        feedback: 'Passed'
+        passed,
+        actual: result,
+        expected: testCase.expected,
+        logs
+      };
+    }
+
+    // -------------------------
+    // SCRIPT MODE
+    // -------------------------
+    if (evaluationMode === "script") {
+
+      const passed =
+        JSON.stringify(logs) ===
+        JSON.stringify(expectedLogs);
+
+      return {
+        passed,
+        actual: logs,
+        expected: expectedLogs
       };
     }
 
     return {
       passed: false,
-      feedback:
-        `Expected ${expected} but got ${JSON.stringify(result)}`
+      error:
+        "Unsupported evaluation mode"
     };
 
   } catch (err) {
 
     return {
       passed: false,
-      feedback: err.message
+      error: err.message
     };
   }
 }

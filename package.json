@@ -19,6 +19,8 @@
   "description": "Distributed automated evaluation platform for assessing student submissions",
   "dependencies": {
     "@e2b/code-interpreter": "^1.2.0",
+    "acorn": "^8.17.0",
+    "acorn-walk": "^8.3.5",
     "body-parser": "^2.2.2",
     "bullmq": "^5.76.8",
     "cors": "^2.8.6",

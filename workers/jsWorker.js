@@ -23,16 +23,19 @@ export async function initializeJsWorker() {
         let repoPath;
         try {
           logger.info(`Starting JS evaluation: ${job.id}`);
-          // const { repoUrl } = job.data;
-          // const repoPath = await cloneRepo(repoUrl);
-          // const students = findJavaScriptFiles(repoPath);
-          // const results = await evaluateAll(students);
-          // const results = await evaluateJavaScript(job.data);
           const {
-  submission,
+          submission,
   testCases,
-  entryFunction
+  entryFunction,
+  evaluationMode,
+  expectedLogs,
+  functions
 } = job.data;
+//           const {
+//   submission,
+//   testCases,
+//   entryFunction
+// } = job.data;
 
 const results = [];
 
@@ -56,6 +59,7 @@ if (!filePath) {
       }
     ]
   };
+}
   // results.push({
   //   studentId: submission.studentId,
   //   studentName: submission.studentName,
@@ -63,13 +67,24 @@ if (!filePath) {
   //     score: 0,
   //     error: 'No JavaScript file found'
   //   }
-}
+// const evaluation =
+// await evaluateStudent(
+//   filePath,
+//   testCases,
+//   entryFunction
+// );
 const evaluation =
-await evaluateStudent(
+await evaluateStudent({
   filePath,
+  evaluationMode:
+    job.data.evaluationMode
+      || "function",
+  entryFunction,
   testCases,
-  entryFunction
-);
+  expectedLogs:
+    job.data.expectedLogs,
+  functions
+});
 
 // results.push({
 //   studentId: submission.studentId,

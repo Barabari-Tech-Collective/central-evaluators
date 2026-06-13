@@ -26,7 +26,7 @@ export async function cloneRepo(repoUrl) {
   return repoPath;
 }
 
-export function deleteRepo(repoPath) {
+export async function deleteRepo(repoPath) {
   try {
     if (fs.existsSync(repoPath)) {
       fs.rmSync(repoPath, {
