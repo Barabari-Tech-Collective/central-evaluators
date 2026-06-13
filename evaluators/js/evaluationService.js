@@ -3,7 +3,7 @@ import { runJavaScript } from "./executionService.js";
 import { analyzeCode } from "./atsService.js";
 import { calculateScore } from "./gradingService.js";
 import { generateFeedback } from "./feedbackService.js";
-import { aiFeedback } from "./aiFeedbackService.js";
+import { generateAIFeedback } from "./aiFeedbackService.js";
 export async function evaluateStudent({
   filePath,
   evaluationMode,
