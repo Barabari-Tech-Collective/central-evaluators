@@ -159,6 +159,7 @@ await generateAIFeedback({
   failures,
   astAnalysis
 });
+console.log("ai feedback", aiFeedback);
 
   return {
     score,

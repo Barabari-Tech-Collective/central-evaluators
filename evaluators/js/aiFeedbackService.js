@@ -7,17 +7,11 @@ const groq =
   });
 
 export async function generateAIFeedback({
-
   score,
-
   passed,
-
   total,
-
   failures,
-
   astAnalysis
-
 }) {
 
   try {
@@ -70,7 +64,11 @@ Maximum 120 words.
       .message.content;
 
   } catch (err) {
-
+      console.error(
+    "[AI FEEDBACK ERROR]",
+    err
+  );
+  console.log("error from ai service", err);
     return
       "AI feedback unavailable.";
   }
