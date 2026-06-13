@@ -119,7 +119,7 @@ export async function evaluateStudent({
       evaluationMode,
       expectedLogs
     });
-
+  console.logs("this is the result from script mode", result);
   passed =
     result.matched;
 

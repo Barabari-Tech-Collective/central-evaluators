@@ -64,68 +64,51 @@ export function runJavaScript({
     // -------------------------
   
 if (evaluationMode === "script") {
-
   const normalizedActual =
     logs.map(v => String(v).trim());
-
   const normalizedExpected =
     expectedLogs.map(v => String(v).trim());
-
   let matched = 0;
-
   const failures = [];
-
   for (
     let i = 0;
     i < normalizedExpected.length;
     i++
   ) {
-
     const expected =
       normalizedExpected[i];
 
     const actual =
       normalizedActual[i];
-
     if (actual === expected) {
-
       matched++;
-
     } else {
-
       failures.push({
         logNumber: i + 1,
         expected,
         actual
       });
-
     }
   }
-
   return {
     passed:
       matched ===
       normalizedExpected.length,
-
     matched,
     total:
       normalizedExpected.length,
-
     failures,
-
     actual: normalizedActual,
     expected: normalizedExpected
   };
+}else{
+  return {
+    passed: false,
+    error:
+      "Unsupported evaluation mode"
+  };
 }
-
-    return {
-      passed: false,
-      error:
-        "Unsupported evaluation mode"
-    };
-
   } catch (err) {
-
     return {
       passed: false,
       error: err.message

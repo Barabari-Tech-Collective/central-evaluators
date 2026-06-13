@@ -36,6 +36,8 @@ export async function routeEvaluation(payload) {
           payload.functions,
         evaluationMode:
           payload.evaluationMode,
+        expectedLogs:
+         payload.expectedLogs,
         assignmentId:
          payload.assignmentId,
         rubricText:
