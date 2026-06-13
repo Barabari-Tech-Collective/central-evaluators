@@ -155,7 +155,7 @@ export async function evaluateStudent({
 await generateAIFeedback({
   score,
   passed,
-  total,
+  total: testCases.length,
   failures,
   astAnalysis
 });
