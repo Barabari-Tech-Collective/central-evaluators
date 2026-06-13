@@ -1,6 +1,6 @@
 import fs from "fs";
 import { runJavaScript } from "./executionService.js";
-import { analyzeCode } from "./astService.js";
+import { analyzeCode } from "./atsService.js";
 import { calculateScore } from "./gradingService.js";
 import { generateFeedback } from "./feedbackService.js";
 import { aiFeedback } from "./aiFeedbackService.js";
