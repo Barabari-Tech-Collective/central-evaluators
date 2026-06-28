@@ -1,35 +1,49 @@
 import { globby } from 'globby';
+import path from 'path';
 
-export async function scanStudentFolders(rootDir) {
+/**
+ * Deterministically choose the entry HTML file (V-20):
+ *   1. an explicit `entryFile` (basename or suffix match), if provided;
+ *   2. otherwise prefer `index.html`, then the shallowest file, then
+ *      lexicographic order — never just "whatever globby returned first".
+ */
+function pickEntryHtml(htmlFiles, rootDir, entryFile) {
+  if (htmlFiles.length === 0) return null;
 
-  const htmlFiles = await globby(
-    ['**/*.html'],
-    {
-      cwd: rootDir,
-      absolute: true
-    }
-  );
+  if (entryFile) {
+    const match = htmlFiles.find(
+      f => path.basename(f) === entryFile || f.endsWith(entryFile)
+    );
+    if (match) return match;
+  }
 
-  const cssFiles = await globby(
-    ['**/*.css'],
-    {
-      cwd: rootDir,
-      absolute: true
-    }
-  );
+  const ranked = htmlFiles
+    .map(f => ({
+      f,
+      isIndex: path.basename(f).toLowerCase() === 'index.html' ? 0 : 1,
+      depth: path.relative(rootDir, f).split(path.sep).length
+    }))
+    .sort(
+      (a, b) =>
+        a.isIndex - b.isIndex ||
+        a.depth - b.depth ||
+        a.f.localeCompare(b.f)
+    );
+
+  return ranked[0].f;
+}
+
+export async function scanStudentFolders(rootDir, entryFile = null) {
+
+  const htmlFiles = await globby(['**/*.html'], { cwd: rootDir, absolute: true });
+  const cssFiles = await globby(['**/*.css'], { cwd: rootDir, absolute: true });
 
   const flags = [];
-
-  if (htmlFiles.length === 0) {
-    flags.push('Missing HTML');
-  }
-
-  if (cssFiles.length === 0) {
-    flags.push('Missing CSS');
-  }
+  if (htmlFiles.length === 0) flags.push('Missing HTML');
+  if (cssFiles.length === 0) flags.push('Missing CSS');
 
   return {
-    html: htmlFiles[0] || null,
+    html: pickEntryHtml(htmlFiles, rootDir, entryFile),
     css: cssFiles,
     flags,
     basePath: rootDir

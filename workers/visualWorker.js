@@ -88,7 +88,8 @@ async function processVisualJob(job) {
   const {
     submission,
     rubricText,
-    expectedUrl
+    expectedUrl,
+    assignmentId
     } = job.data;
   try {
     logger.info(`Starting visual evaluation job: ${jobId}`);
@@ -117,6 +118,7 @@ const result =
   await withTimeout(
     evaluateStudentsWithVision({
       jobId,
+      assignmentId,
       studentId:
         submission.studentId,
 
@@ -126,7 +128,8 @@ const result =
       repoPath,
 
       rubricText,
-      expectedUrl
+      expectedUrl,
+      entryFile: submission.entryFile
     }),
     config.timeout, // V-08: real, enforced job timeout
     `visual-eval ${jobId}`
