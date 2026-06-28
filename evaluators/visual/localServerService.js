@@ -14,7 +14,9 @@ export async function startStaticServer(
       }
     );
 
-    server.listen(0, () => {
+    // V-36: bind to loopback only — the student site must not be reachable
+    // on the network during evaluation.
+    server.listen(0, "127.0.0.1", () => {
 
       const port =
         server.address().port;
