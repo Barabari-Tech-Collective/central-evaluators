@@ -13,10 +13,13 @@ import { initializeReactWorker, stopReactWorker } from './workers/reactWorker.js
 import { initializeBackendWorker, stopBackendWorker } from './workers/backendWorker.js';
 import { initializeFullstackWorker, stopFullstackWorker } from './workers/fullstackWorker.js';
 
+import { requireApiKey, evaluateRateLimiter } from './middleware/auth.js';
+
 dotenv.config();
 
 const app = express();
-app.use(express.json());
+// V-28: cap request body size to prevent memory-pressure DoS.
+app.use(express.json({ limit: process.env.MAX_BODY_SIZE || '2mb' }));
 
 // Startup sequence
 async function startServer() {
@@ -42,8 +45,8 @@ async function startServer() {
     ]);
     logger.info('✅ All workers initialized');
 
-    // 4. API routes
-    app.post('/evaluate', evaluate);
+    // 4. API routes (V-04: rate limit + API-key auth)
+    app.post('/evaluate', evaluateRateLimiter, requireApiKey, evaluate);
 
     // 5. Health check endpoints
     app.get('/health', (req, res) => {

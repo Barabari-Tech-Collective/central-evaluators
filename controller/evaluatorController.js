@@ -2,12 +2,54 @@
 
 import { routeEvaluation } from '../router/evaluationRouter.js';
 import logger from '../config/logger.js';
+import {
+  assertSafeUrl,
+  assertUrlSyntax,
+  getAllowedGitHosts
+} from '../evaluators/visual/utils/urlGuard.js';
+
+const MAX_SUBMISSIONS = Number(process.env.MAX_SUBMISSIONS) || 500;
+const MAX_RUBRIC_CHARS = Number(process.env.MAX_RUBRIC_CHARS) || 20000;
+
+class ValidationError extends Error {}
+
+// Validate + sanitize the visual payload (V-28) and its URLs (V-03).
+async function validateVisualPayload(payload) {
+  const { submissions, expectedUrl, rubricText } = payload;
+
+  if (!Array.isArray(submissions) || submissions.length === 0) {
+    throw new ValidationError('submissions must be a non-empty array');
+  }
+  if (submissions.length > MAX_SUBMISSIONS) {
+    throw new ValidationError(`Too many submissions (max ${MAX_SUBMISSIONS})`);
+  }
+  if (typeof rubricText !== 'string' || !rubricText.trim()) {
+    throw new ValidationError('rubricText is required');
+  }
+  if (rubricText.length > MAX_RUBRIC_CHARS) {
+    throw new ValidationError(`rubricText too large (max ${MAX_RUBRIC_CHARS} chars)`);
+  }
+  if (typeof expectedUrl !== 'string') {
+    throw new ValidationError('expectedUrl is required');
+  }
+
+  // Full SSRF check on the single reference URL.
+  await assertSafeUrl(expectedUrl);
+
+  // Fast syntactic + allowlist check on each repo URL (full DNS check runs at clone).
+  const allowedHosts = getAllowedGitHosts();
+  for (const s of submissions) {
+    if (!s || typeof s.repoUrl !== 'string') {
+      throw new ValidationError('each submission needs a repoUrl');
+    }
+    assertUrlSyntax(s.repoUrl, { allowedHosts });
+  }
+}
 
 export async function evaluate(req, res) {
   try {
-    const payload = req.body;
+    const payload = req.body || {};
 
-    // Validate required fields
     if (!payload.type) {
       return res.status(400).json({
         success: false,
@@ -15,36 +57,43 @@ export async function evaluate(req, res) {
       });
     }
 
-    // Route evaluation
+    if (payload.type === 'visual') {
+      await validateVisualPayload(payload);
+    }
+
     const jobs = await routeEvaluation(payload);
 
-    logger.info('Evaluation job created', {
-      type: payload.type
-    });
-    if (Array.isArray(jobs)) {
-  return res.json({
-    success: true,
-    jobs: jobs.map(job => ({
-      jobId: job.id,
-      statusUrl:
-        `/jobs/${payload.type}/${job.id}`
-    }))
-  });
-}
+    logger.info('Evaluation job created', { type: payload.type });
 
-    // return res.json({
-    //   success: true,
-    //   jobId: job.id,
-    //   queue: payload.type,
-    //   timestamp: new Date().toISOString()
-    // });
+    if (Array.isArray(jobs)) {
+      return res.json({
+        success: true,
+        jobs: jobs.map(job => ({
+          jobId: job.id,
+          statusUrl: `/jobs/${payload.type}/${job.id}`
+        }))
+      });
+    }
+
+    return res.json({
+      success: true,
+      jobId: jobs.id,
+      statusUrl: `/jobs/${payload.type}/${jobs.id}`
+    });
 
   } catch (err) {
-    logger.error('Evaluation error:', err);
+    // Bad input → 400; everything else → 500.
+    const isBadInput =
+      err instanceof ValidationError ||
+      /Invalid URL|Disallowed URL scheme|Host not in allowlist|private\/loopback|DNS resolution failed/.test(
+        err.message
+      );
 
-    return res.status(500).json({
-      success: false,
-      error: err.message,
-    });
+    if (isBadInput) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+
+    logger.error('Evaluation error:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 }

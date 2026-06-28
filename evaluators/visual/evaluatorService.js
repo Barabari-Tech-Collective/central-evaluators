@@ -25,6 +25,8 @@ import path from "path";
 import OpenAI from "openai";
 import { getBrowserPool } from "./browserPool.js";
 import { startStaticServer } from "./localServerService.js";
+import { assertSafeUrl } from "./utils/urlGuard.js";
+import logger from "../../config/logger.js";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -78,10 +80,15 @@ export async function evaluateStudentsWithVision({
     context = await browser.newContext();
 
     // ---- Reference (expected) screenshot ----
+    // V-03: re-validate right before navigating (defense in depth vs DNS rebinding).
+    await assertSafeUrl(expectedUrl);
+
     const expectedPath = path.join(workDir, "expected.png");
     const expectedPage = await context.newPage();
     await expectedPage.goto(expectedUrl, { timeout: 30000 });
-    await expectedPage.screenshot({ path: expectedPath, fullPage: true });
+    // V-26: fullPage:false caps the screenshot to the viewport — a pathological
+    // student/reference page can't blow memory with a 50k-px-tall capture.
+    await expectedPage.screenshot({ path: expectedPath, fullPage: false });
     await expectedPage.close();
     const expectedImg = await fs.readFile(expectedPath);
 
@@ -93,10 +100,10 @@ export async function evaluateStudentsWithVision({
     const page = await context.newPage();
     try {
       const responsePage = await page.goto(url, { timeout: 30000 });
-      console.log("Opening student url:", url, "status:", responsePage?.status());
+      logger.debug(`Opening student url: ${url} status: ${responsePage?.status()}`);
 
       const screenshotPath = path.join(workDir, `${studentId || name}.png`);
-      await page.screenshot({ path: screenshotPath, fullPage: true });
+      await page.screenshot({ path: screenshotPath, fullPage: false }); // V-26
 
       const domResults = await runDynamicDomChecks(page, rubric);
       const behaviorResults = await runBehaviorChecks(page, rubric);
