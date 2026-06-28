@@ -16,7 +16,7 @@ This is a **living document**. Every issue in §4 has a checkbox and a stable ID
 - §5 ("Breaking-point analysis") is the answer to *"when will it break and how do I fix it in production"* — read it before any large batch run.
 - §6 is the test plan + harness (`scripts/`).
 
-**Current headline:** as committed, the visual evaluator **cannot start in a production install** — Playwright is a `devDependency` and is not present in `node_modules` (see `V-01`). Fix that first; nothing else matters until the worker boots.
+**Status (branch `developer-Arma`):** ✅ **all 38 findings (V-01…V-38) addressed** across 6 batched commits. The original headline blocker (Playwright as a devDependency) is fixed and the regression suite (`npm run test:unit` — scoring, rubric, URL-guard) is green. Items needing a live Redis+Playwright+OpenAI stack to fully confirm are listed in §8.
 
 ---
 
@@ -317,12 +317,14 @@ This section maps the load/operational thresholds at which the visual evaluator 
 
 Because the live pipeline needs Redis + Playwright/Chromium + an `OPENAI_API_KEY`, tests are split into **infra-free** (run today) and **integration** (need infra).
 
-### 6.1 Infra-free (run now)
+### 6.1 Infra-free (run now) — `npm run test:unit`
 
-- `scripts/test-scoring-logic.mjs` — reproduces the §1.2 scoring math and **demonstrates `V-07` (double counting)** and `V-21` (free full-credit). Pure functions, no infra.
-- `scripts/test-rubric-fallback.mjs` — feeds wrapped/garbage JSON through the same `JSON.parse(... replace(/```/))` logic to **demonstrate `V-09`** (returns `[]` or non-array).
+These now import the **real** shipped helpers and assert the fixed behavior (they began as red repros and are green post-fix):
+- `scripts/test-scoring-logic.mjs` — `scoring.js`: single-counted total (`V-07`), no free credit + manual-review flag (`V-21`), normalized score (`V-30`).
+- `scripts/test-rubric-fallback.mjs` — `rubricSchema.js`: every realistic shape → usable array or typed `RubricParseError`, never silent-0 (`V-09`).
+- `scripts/test-url-guard.mjs` — `urlGuard.js`: `file://`/metadata/loopback/private rejected, allowlist + injection strings rejected (`V-02`/`V-03`).
 
-Run: `node scripts/test-scoring-logic.mjs && node scripts/test-rubric-fallback.mjs`
+Run: `npm run test:unit`
 
 ### 6.2 Integration (need Redis + Playwright + OpenAI key)
 
@@ -355,4 +357,24 @@ Run: `node scripts/test-scoring-logic.mjs && node scripts/test-rubric-fallback.m
 
 ---
 
-*End of audit. Update checkboxes as you fix. Keep §5 current — it's the on-call runbook for this evaluator.*
+## 8. Live verification (needs Redis + Playwright + OpenAI)
+
+All 38 fixes are committed and statically verified (`node --check`, import smoke, `npm run test:unit`). The following require a running stack and should be run before the first production cohort. Each maps to the §5 breaking-point it guards.
+
+| Check | How | Pass criteria | Guards |
+|---|---|---|---|
+| **Boot/packaging** | `rm -rf node_modules && npm ci --omit=dev && npm start` | all workers init; `playwright install chromium` ran | V-01 / B1 |
+| **Pool-exhaustion recovery** | point `expectedUrl` at a dead host; enqueue 5 jobs | jobs fail cleanly; `browserPool.getStats().available` returns to pool size; queue not wedged | V-05 / B2 |
+| **Leak soak** | enqueue 100 missing-HTML repos | `lsof`/RSS/disk flat; after SIGTERM `pgrep -lf chrome` empty | V-06/V-25/V-27 / B3 |
+| **Behavior same-tab** | rubric with an in-tab link | passes in <5s (not a 30s hang) | V-11 / B5 |
+| **Deterministic score** | evaluate the same submission 3× | identical score each time | V-18 |
+| **Single-attempt permanent fail** | submit an unparseable rubric / bad repo URL | exactly one failed attempt (UnrecoverableError), not 3 | V-17/V-09 |
+| **Real timeout** | student page that hangs | job fails at `config.timeout`, not at lock-stall; not re-delivered | V-08/V-19 / B10 |
+| **Auth/limits** | `POST /evaluate` without `x-api-key`; oversized batch | 401; 400 | V-04/V-28 / B12 |
+| **SSRF/RCE** | `repoUrl` injection string; metadata-IP `expectedUrl` | both 400, no clone/navigation | V-02/V-03 / B11 |
+
+Acceptance = §6.3.
+
+---
+
+*End of audit. Update checkboxes as you fix. Keep §5 (breaking-points) and §8 (live checks) current — together they are the on-call runbook for this evaluator.*
