@@ -179,7 +179,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** move `startStaticServer` to *after* the flags check, and/or close the server in a single `finally`. Best: one `finally` block owns server + context + browser cleanup.
   **Verify:** submit 20 repos with no HTML; `lsof -p <pid> | grep -c LISTEN` does not grow.
 
-- [ ] **V-07 — Final score double-counts DOM + behavior.**
+- [x] **V-07 — Final score double-counts DOM + behavior.** **FIXED (Batch 3):** prompt now scores visual items only; `assembleScore()` in `scoring.js` is the single source of truth (`dom+behavior+visual`, each once). Verified by `scripts/test-scoring-logic.mjs` (total 35, not 85).
   `promptBuilder.js` instructs gpt-4o: *"Give FULL evaluation (visual + dom + behavior)"* and *"Final score MUST be sum of all rubric items"*. The regex then extracts that **all-items** total into `visualScore`. But the orchestrator computes `finalScore = domScore + behaviorScore + visualScore` — so DOM and behavior are counted **twice** (once deterministically, once inside the model's total). This contradicts the documented design (vision should score *visual items only*, 0–100). The commented-out earlier prompt was correct ("ONLY give score for visual items").
   **Fix:** revert the prompt to ask the model for the **visual-items subtotal only** (and ideally as JSON: `{"visualScore": <n>, "breakdown":[...], "feedback":"..."}`), or stop adding `domScore`/`behaviorScore` separately. Pick one source of truth.
   **Verify:** unit-test the scoring with a rubric of 1 dom (w=10, pass) + 1 visual (w=20, model=15) → expect 25, not 35.
@@ -191,17 +191,17 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 
 ### 🟠 High
 
-- [ ] **V-09 — Rubric parse failures silently score students 0 (and are retried 3×).**
+- [x] **V-09 — Rubric parse failures silently score students 0 (and are retried 3×).** **FIXED (Batch 3):** `parseRubricWithSelectors` uses `response_format:json_object`; `normalizeRubric` (in `rubricSchema.js`) accepts array/`{items|rubric|criteria}`, validates each item, and throws typed `RubricParseError` instead of returning `[]`. Verified by `scripts/test-rubric-fallback.mjs`. (Worker no-retry handled in Batch 4 / V-17.)
   `parseRubricWithSelectors` returns `[]` on any JSON error, and returns an **object** (not array) if gpt-4o wraps results in `{ "rubric": [...] }`. Downstream `for (const item of rubric)` then iterates nothing (→ all-0 scores) or throws "not iterable" (→ job fails → 3 retries, 3× model cost). Students are penalized for an LLM formatting hiccup.
   **Fix:** call with `response_format: { type: 'json_object' }`, accept both `[]` and `{items:[]}` shapes, validate each item against a schema, and **throw a typed `RubricParseError`** instead of returning `[]` so the job is flagged for manual review rather than silently zeroing students. Make rubric parsing a non-retryable failure (see `V-17`).
   **Verify:** feed a rubric that gpt-4o tends to wrap; assert a valid array is produced or the job is flagged, never silent-0.
 
-- [ ] **V-10 — Vision score regex is brittle → `visualScore` silently 0.**
+- [x] **V-10 — Vision score regex is brittle → `visualScore` silently 0.** **FIXED (Batch 3):** the vision call uses `response_format:json_object`; `visualScore` is read from the JSON field, no regex scraping.
   `/total\s*score[:\s]+(\d+(\.\d+)?)/i` only matches `total score: 85`. Misses `Total: 85`, `Total score = 85`, `**Total Score** 85/100`, or any localized phrasing. When it misses, `visualScore = 0` with no signal.
   **Fix:** force JSON output (see `V-07`/`V-09`) and read `response.visualScore` directly; drop regex scraping.
   **Verify:** 10 varied model outputs all parse to the intended number.
 
-- [ ] **V-11 — Behavior checks assume every click opens a new tab; in-page navigation always fails and burns 30s each.**
+- [x] **V-11 — Behavior checks assume every click opens a new tab; in-page navigation always fails and burns 30s each.** **FIXED (Batch 3):** `behaviourService.js` races `waitForEvent('page')` vs `waitForNavigation()` with a 5s budget, reads the resulting URL for either case, resets the page to its start URL between checks. (Live-verify same-tab <5s.)
   `behaviourService.js` does `Promise.all([page.context().waitForEvent('page'), page.click(sel)])`. This only resolves if the click opens a **new tab** (`target="_blank"`). For a normal same-tab link, `waitForEvent('page')` never fires → 30s default timeout → caught → `false`. Every same-tab behavior check is a guaranteed fail and a 30s stall (serially adds up across checks → can blow the job budget).
   **Fix:** detect both cases — race `waitForEvent('page')` against `page.waitForNavigation()`; if same-tab, read `page.url()` and navigate back / reload before the next check. Reset page state between behavior checks (clicks mutate the page). Add a short per-check timeout.
   **Verify:** a same-tab link to `twitter.com` passes and completes in <5s.
@@ -236,7 +236,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** classify errors. Transient (network blip, browser crash) → retry. Permanent (validation, parse, 4xx clone) → `throw new UnrecoverableError(...)` (BullMQ) so it fails once. Move the expensive OpenAI call as late as possible and short-circuit on deterministic 0s.
   **Verify:** a malformed repo URL produces exactly one failed attempt.
 
-- [ ] **V-18 — Vision scoring is non-deterministic (no temperature/seed/format).**
+- [x] **V-18 — Vision scoring is non-deterministic (no temperature/seed/format).** **FIXED (Batch 3):** vision + rubric calls now use `temperature:0` and `response_format:json_object`; the raw model JSON is kept as `feedback` for auditability.
   The vision `chat.completions.create` sets no `temperature`/`seed`/`response_format`. The same submission can score differently across retries — unfair and non-reproducible for grading.
   **Fix:** `temperature: 0`, `seed: <fixed>`, `response_format: json_object`; log the raw model response with the score for auditability.
   **Verify:** same input → same score across 3 runs.
@@ -251,11 +251,9 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [ ] **V-20 — `scanStudentFolders` grabs `htmlFiles[0]` with no `index.html` preference.**
   globby order isn't guaranteed; `about.html` may be evaluated instead of the entry page. **Fix:** prefer `index.html` (root, then shallowest), make selection deterministic, optionally accept an `entryFile` in the payload.
 
-- [ ] **V-21 — DOM item with no `checks` is awarded full weight for free.**
-  `domScore += item.weight` when `item.checks` is empty — so any DOM item gpt-4o failed to attach selectors to inflates the score. **Fix:** treat missing checks as 0 (or route the item to manual review), never auto-full-credit.
+- [x] **V-21 — DOM item with no `checks` is awarded full weight for free.** **FIXED (Batch 3):** `computeDomScore` skips check-less DOM items (0 credit); `manualReviewItems()` surfaces them and the result sets `manualCorrection`. Verified by `scripts/test-scoring-logic.mjs`.
 
-- [ ] **V-22 — `check.condition` is ignored; only existence is tested.**
-  `domService` always does `page.$(selector)` regardless of `condition` ("visible", "text equals", etc.). **Fix:** implement the condition switch (`exists`/`visible`/`textContains`/`attr`) so rubric authoring matches behavior.
+- [x] **V-22 — `check.condition` is ignored; only existence is tested.** **FIXED (Batch 3):** `domService.js` implements an `exists`/`visible`/`textContains`/`attr` switch (default `exists`).
 
 - [ ] **V-23 — No viewport normalization for screenshots.**
   Expected and student pages use Chromium's default viewport; `fullPage` height varies by content, so the two images fed to the vision model are different sizes → unreliable comparison. **Fix:** set a fixed `viewport` (e.g. 1366×768) on the context for both; decide deliberately on `fullPage`.
@@ -278,8 +276,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [ ] **V-29 — Reference screenshot is recomputed for every submission.**
   Because the router fans out one job per submission, the same `expectedUrl` is fetched + screenshotted N times. Wasteful and (with the shared file) racy. **Fix:** screenshot the reference once per assignment and cache it (keyed by `assignmentId`+`expectedUrl`) in Redis/disk; reuse across submissions.
 
-- [ ] **V-30 — No score normalization / schema across rubrics.**
-  `finalScore` is an unbounded sum whose scale depends on rubric weights and whatever number the model emits. Two assignments aren't comparable; there's no `maxScore`. **Fix:** normalize to a fixed scale (e.g. % of total weight), return a structured `{domScore, behaviorScore, visualScore, total, maxTotal, normalized}` and persist it.
+- [x] **V-30 — No score normalization / schema across rubrics.** **FIXED (Batch 3):** `assembleScore()` returns `{domScore, behaviorScore, visualScore, total, maxTotal, normalized}` (normalized = total/maxTotal*100); the result also carries `manualReviewItems` and `studentId`.
 
 ### ⚪ Low / hygiene
 
@@ -290,7 +287,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [x] **V-35 — Dependency bloat:** `cors`, `body-parser`, `multer`, `node-cron`, `lodash` appear unused by the running paths. **FIXED (Batch 1):** grep-confirmed 0 source uses; removed all five from `package.json`.
 - [ ] **V-36 — Static server binds all interfaces.** `server.listen(0)` (no host) binds `0.0.0.0`/`::`, exposing the student site on the network during eval. **Fix:** `server.listen(0, '127.0.0.1')`.
 - [x] **V-37 — No `.env.example`.** **FIXED (Batch 1):** added `.env.example` documenting server/auth/Redis/OpenAI/Groq/E2B/SSRF-allowlist/logging vars.
-- [ ] **V-38 — `expected.replace("url contains ", "")` mismatches the rubric prompt.** `behaviourService` strips a `"url contains "` prefix the rubric prompt never produces (it emits `"expected": "twitter.com"`). Dead/fragile code. **Fix:** drop the strip or align the rubric contract; validate `expected` is a non-empty string before `.replace`/`.includes` (it will throw if `expected` is missing).
+- [x] **V-38 — `expected.replace("url contains ", "")` mismatches the rubric prompt.** **FIXED (Batch 3):** `behaviourService.js` only strips the prefix when `expected` is a non-empty string and falls back to "any navigation = pass" when `expected` is absent.
 
 ---
 

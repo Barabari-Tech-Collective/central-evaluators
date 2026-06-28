@@ -13,6 +13,12 @@ import { scanStudentFolders } from "./scannerService.js";
 import { runDynamicDomChecks } from "./domService.js";
 import runBehaviorChecks from "./behaviourService.js";
 import buildVisionPrompt from "./utils/promptBuilder.js";
+import {
+  computeDomScore,
+  computeBehaviorScore,
+  manualReviewItems,
+  assembleScore
+} from "./scoring.js";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
@@ -95,39 +101,18 @@ export async function evaluateStudentsWithVision({
       const domResults = await runDynamicDomChecks(page, rubric);
       const behaviorResults = await runBehaviorChecks(page, rubric);
 
-      // ---- DOM SCORE ----  (logic unchanged here; fixed in Batch 3)
-      let domScore = 0;
-      for (const item of rubric) {
-        if (item.type !== "dom") continue;
-        if (!item.checks || item.checks.length === 0) {
-          domScore += item.weight;
-          continue;
-        }
-        let passedCount = 0;
-        for (const check of item.checks) {
-          const key = `${item.description} :: ${check.selector}`;
-          if (domResults[key]) passedCount++;
-        }
-        domScore += (passedCount / item.checks.length) * item.weight;
-      }
-
-      // ---- BEHAVIOR SCORE ----
-      let behaviorScore = 0;
-      for (const item of rubric) {
-        if (item.type !== "behavior") continue;
-        if (!item.checks?.length) continue;
-        const passed = item.checks.every(check => {
-          const key = `${item.description} :: ${check.selector}`;
-          return behaviorResults[key];
-        });
-        if (passed) behaviorScore += item.weight;
-      }
+      // Deterministic, single-counted scores (V-07/V-21).
+      const domScore = computeDomScore(rubric, domResults);
+      const behaviorScore = computeBehaviorScore(rubric, behaviorResults);
 
       const studentImage = await fs.readFile(screenshotPath);
       const prompt = buildVisionPrompt(rubric, domResults, behaviorResults);
 
+      // Deterministic vision call returning strict JSON (V-10/V-18).
       const aiRes = await openai.chat.completions.create({
         model: "gpt-4o",
+        temperature: 0,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "user",
@@ -150,19 +135,28 @@ export async function evaluateStudentsWithVision({
         ]
       });
 
-      const response = aiRes.choices[0].message.content ?? "";
-
+      const raw = aiRes.choices?.[0]?.message?.content ?? "{}";
       let visualScore = 0;
-      const totalMatch = response.match(/total\s*score[:\s]+(\d+(\.\d+)?)/i);
-      if (totalMatch) visualScore = Number(totalMatch[1]);
+      let visionFeedback = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        visualScore = Number(parsed.visualScore) || 0;
+        visionFeedback = parsed;
+      } catch {
+        // keep raw text as feedback; visualScore stays 0
+      }
 
-      const finalScore = domScore + behaviorScore + visualScore;
+      const score = assembleScore({ rubric, domScore, behaviorScore, visualScore });
+      const needsManual = manualReviewItems(rubric);
 
       results.push({
         name,
-        score: finalScore,
-        feedback: response,
-        manualCorrection: false
+        studentId,
+        score: score.total, // backwards-compatible field
+        ...score, // domScore, behaviorScore, visualScore, total, maxTotal, normalized
+        manualReviewItems: needsManual,
+        feedback: visionFeedback,
+        manualCorrection: needsManual.length > 0
       });
     } catch (err) {
       results.push({

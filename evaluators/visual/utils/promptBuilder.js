@@ -1,75 +1,45 @@
-export default function buildVisionPrompt(rubric, domResults, behaviorResults) {
+// Builds the GPT-4o vision prompt.
+//
+// V-07/V-10/V-18: the model now scores ONLY the visual rubric items (DOM and
+// behavior are graded deterministically elsewhere and added once by the
+// orchestrator — no more double counting), and must return strict JSON so the
+// score is read from a field rather than scraped from prose with a regex.
+//
+// `domResults`/`behaviorResults` are accepted for signature compatibility but
+// intentionally not fed into the score — they are not the model's job.
+export default function buildVisionPrompt(rubric, _domResults, _behaviorResults) {
+  const visualItems = rubric.filter(r => r.type === "visual");
+  const maxVisual = visualItems.reduce(
+    (s, r) => s + (Number(r.weight) || 0),
+    0
+  );
 
-  // let prompt = `
-// You are an expert evaluator.
-// STRICT RULES:
-// - DOM → use DOM results only
-// - Behavior → use Behavior results only
-// - Visual → use screenshots only
+  let prompt = `You are an expert UI evaluator. The FIRST image is the STUDENT's page; the SECOND image is the EXPECTED reference design.
 
-// DO NOT GUESS.
+Score ONLY the VISUAL rubric items below (layout, spacing, colors, typography, overall appearance).
+Do NOT score DOM/structure or behavior/interaction items — those are graded separately.
+Judge strictly from the two screenshots. Do not guess.
 
-// Rubric:
-// `;
+VISUAL rubric items (max ${maxVisual} points total):`;
 
-//   rubric.forEach((r, i) => {
-//     prompt += `\n${i + 1}. ${r.description} (${r.weight}) [${r.type}]`;
-//   });
-
-//   prompt += `\n\nDOM Results:`;
-//   for (const [k, v] of Object.entries(domResults)) {
-//     prompt += `\n- ${k}: ${v ? 'PASS' : 'FAIL'}`;
-//   }
-
-//   prompt += `\n\nBehavior Results:`;
-//   for (const [k, v] of Object.entries(behaviorResults)) {
-//     prompt += `\n- ${k}: ${v ? 'PASS' : 'FAIL'}`;
-//   }
-
-//   prompt += `\n\nGive:
-// - Total score ONLY for visual items
-// - ONLY give score for visual items.
-// - Do NOT include DOM or behavior in total.
-// - Breakdown
-// - Feedback
-// `;
-let prompt = `
-You are an expert evaluator.
-
-STRICT RULES:
-- DOM → use ONLY DOM results
-- Behavior → use ONLY Behavior results
-- Visual → use screenshots
-
-DO NOT GUESS ANYTHING.
-
-Rubric:
-`;
-
-  rubric.forEach((r, i) => {
-    prompt += `\n${i + 1}. ${r.description} (${r.weight}) [${r.type}]`;
-  });
-
-  prompt += `\n\nDOM Results:`;
-  for (const [k, v] of Object.entries(domResults)) {
-    prompt += `\n- ${k}: ${v ? 'PASS' : 'FAIL'}`;
+  if (visualItems.length === 0) {
+    prompt += `\n(none — return "visualScore": 0)`;
+  } else {
+    visualItems.forEach((r, i) => {
+      prompt += `\n${i + 1}. ${r.description} (weight ${r.weight})`;
+    });
   }
 
-  prompt += `\n\nBehavior Results:`;
-  for (const [k, v] of Object.entries(behaviorResults)) {
-    prompt += `\n- ${k}: ${v ? 'PASS' : 'FAIL'}`;
-  }
+  prompt += `
 
-  prompt += `\n\nIMPORTANT:
-- Give FULL evaluation (visual + dom + behavior)
-- Final score MUST be sum of all rubric items
-- Show breakdown per rubric item
-
-Return:
-- Total score out of full marks
-- Breakdown (each item)
-- Feedback
-`;
+Return STRICT JSON ONLY (no markdown, no prose) in exactly this shape:
+{
+  "visualScore": <number between 0 and ${maxVisual}>,
+  "breakdown": [
+    { "item": "<rubric item description>", "awarded": <number>, "max": <number>, "reason": "<short>" }
+  ],
+  "feedback": "<2-4 sentences of concrete, actionable feedback>"
+}`;
 
   return prompt;
 }
