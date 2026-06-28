@@ -1,5 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { evaluate } from './controller/evaluatorController.js';
 import queueManager from './config/queueManager.js';
 import logger from './config/logger.js';
@@ -17,9 +19,16 @@ import { requireApiKey, evaluateRateLimiter } from './middleware/auth.js';
 
 dotenv.config();
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const app = express();
 // V-28: cap request body size to prevent memory-pressure DoS.
 app.use(express.json({ limit: process.env.MAX_BODY_SIZE || '2mb' }));
+
+// Serve the web UI (static files in public/). express.static only handles
+// GET/HEAD for existing files, so it never shadows POST /evaluate or the
+// /jobs and /health routes — they fall through to their handlers.
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Startup sequence
 async function startServer() {

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Central Evaluators</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎓</span>
+      <div>
+        <h1>Central Evaluators</h1>
+        <p class="tagline">Pick an evaluator, add the assignment + test, get a graded result.</p>
+      </div>
+    </div>
+    <button id="settingsBtn" class="ghost-btn" title="Settings">⚙️ Settings</button>
+  </header>
+
+  <!-- Settings drawer -->
+  <section id="settings" class="settings hidden">
+    <label for="apiKey">API key <small>(sent as <code>x-api-key</code>; saved in this browser only)</small></label>
+    <div class="row">
+      <input id="apiKey" type="password" placeholder="paste your API key" autocomplete="off" />
+      <button id="saveKey" class="primary-btn">Save</button>
+    </div>
+    <p id="keyStatus" class="hint"></p>
+  </section>
+
+  <main class="container">
+    <!-- Step 1: choose evaluator -->
+    <section class="panel">
+      <h2><span class="step">1</span> Choose what to evaluate</h2>
+      <div id="evaluatorPicker" class="picker"><!-- buttons injected --></div>
+      <p id="evaluatorBlurb" class="blurb"></p>
+    </section>
+
+    <!-- Step 2: assignment + test -->
+    <section class="panel">
+      <h2><span class="step">2</span> Add the assignment &amp; test</h2>
+      <form id="evalForm" autocomplete="off"><!-- fields injected --></form>
+      <div class="actions">
+        <button id="evaluateBtn" class="primary-btn big">▶ Evaluate</button>
+        <button id="resetBtn" type="button" class="ghost-btn">Clear</button>
+      </div>
+      <div id="formError" class="banner error hidden"></div>
+    </section>
+
+    <!-- Step 3: results -->
+    <section class="panel" id="resultsPanel">
+      <h2><span class="step">3</span> Results</h2>
+      <div id="results" class="results">
+        <p class="placeholder">Results will appear here after you click <strong>Evaluate</strong>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>Local tool · jobs run asynchronously and are polled until done.</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
