@@ -248,18 +248,15 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 
 ### 🟡 Medium
 
-- [ ] **V-20 — `scanStudentFolders` grabs `htmlFiles[0]` with no `index.html` preference.**
-  globby order isn't guaranteed; `about.html` may be evaluated instead of the entry page. **Fix:** prefer `index.html` (root, then shallowest), make selection deterministic, optionally accept an `entryFile` in the payload.
+- [x] **V-20 — `scanStudentFolders` grabs `htmlFiles[0]` with no `index.html` preference.** **FIXED (Batch 6):** `pickEntryHtml` prefers an explicit `entryFile`, then `index.html`, then shallowest, then lexicographic (deterministic). `entryFile` threaded from `submission.entryFile`.
 
 - [x] **V-21 — DOM item with no `checks` is awarded full weight for free.** **FIXED (Batch 3):** `computeDomScore` skips check-less DOM items (0 credit); `manualReviewItems()` surfaces them and the result sets `manualCorrection`. Verified by `scripts/test-scoring-logic.mjs`.
 
 - [x] **V-22 — `check.condition` is ignored; only existence is tested.** **FIXED (Batch 3):** `domService.js` implements an `exists`/`visible`/`textContains`/`attr` switch (default `exists`).
 
-- [ ] **V-23 — No viewport normalization for screenshots.**
-  Expected and student pages use Chromium's default viewport; `fullPage` height varies by content, so the two images fed to the vision model are different sizes → unreliable comparison. **Fix:** set a fixed `viewport` (e.g. 1366×768) on the context for both; decide deliberately on `fullPage`.
+- [x] **V-23 — No viewport normalization for screenshots.** **FIXED (Batch 6):** context created with a fixed `viewport` (1366×900) for both reference and student; combined with `fullPage:false` (V-26) both images are the same size.
 
-- [ ] **V-24 — Screenshots taken without waiting for fonts/images/CSS.**
-  `goto` waits for `load` only; webfonts/lazy CSS may not be applied → flaky visual scores. **Fix:** `waitUntil: 'networkidle'` (or wait for `document.fonts.ready` + a short settle) before screenshotting.
+- [x] **V-24 — Screenshots taken without waiting for fonts/images/CSS.** **FIXED (Batch 6):** both `goto`s use `waitUntil: 'networkidle'` and `await document.fonts.ready` before screenshotting.
 
 - [x] **V-25 — `screenshots/` and `temp/` are never cleaned; orphaned on crash.** **FIXED (Batch 2):** per-job temp dir deleted in `finally`; `sweepStaleRepos()` removes `<cwd>/temp` clones >2h old at worker startup.
   Per-student PNGs accumulate forever; if the process dies mid-job, `temp/visual_*` clones are orphaned (only the worker `finally` deletes them). Disk fills over a semester of batches. **Fix:** use per-job temp dirs deleted in `finally`; add a startup sweep of stale `temp/`/`screenshots/` older than N hours; alert on disk usage.
@@ -273,8 +270,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [x] **V-28 — No payload / batch-size limits.** **FIXED (Batch 5):** controller caps `submissions.length` (`MAX_SUBMISSIONS`, default 500) and `rubricText` length (`MAX_RUBRIC_CHARS`, default 20k); `express.json({ limit })` (default 2mb) caps body size. Bad input → 400.
   `submissions` can be arbitrarily large → instant queue flood; `rubricText` unbounded. **Fix:** cap `submissions.length`, validate payload size, reject oversized rubrics; consider chunked enqueue.
 
-- [ ] **V-29 — Reference screenshot is recomputed for every submission.**
-  Because the router fans out one job per submission, the same `expectedUrl` is fetched + screenshotted N times. Wasteful and (with the shared file) racy. **Fix:** screenshot the reference once per assignment and cache it (keyed by `assignmentId`+`expectedUrl`) in Redis/disk; reuse across submissions.
+- [x] **V-29 — Reference screenshot is recomputed for every submission.** **FIXED (Batch 6):** in-process promise cache keyed by `assignmentId::expectedUrl` (max 20, oldest-evicted) renders the reference once and dedupes concurrent jobs; failures aren't cached.
 
 - [x] **V-30 — No score normalization / schema across rubrics.** **FIXED (Batch 3):** `assembleScore()` returns `{domScore, behaviorScore, visualScore, total, maxTotal, normalized}` (normalized = total/maxTotal*100); the result also carries `manualReviewItems` and `studentId`.
 
@@ -283,7 +279,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [x] **V-31 — `node_modules` is committed (1861 files, and incomplete — Playwright missing).** **FIXED (Batch 1):** `git rm -r --cached node_modules`; still ignored.
 - [x] **V-32 — `logs/` is committed (`combined.log`, `error.log`, `workers.log`).** **FIXED (Batch 1):** `git rm -r --cached logs`; added `logs/`, `*.log`, `temp/`, `screenshots/`, `final_scores.json` to `.gitignore`.
 - [x] **V-33 — Debug `console.log` noise.** **FIXED (Batch 5):** removed the full-job dump in `getJobStatus` and the rubric/url `console.log`s; routed through `logger.debug` without dumping job/secret payloads.
-- [ ] **V-34 — `vm2@3.9.19` is deprecated with known sandbox-escape CVEs** (used by the JS evaluator, not visual, but ships in the same service). **Fix:** migrate JS execution to `isolated-vm` or an E2B sandbox.
+- [x] **V-34 — `vm2@3.9.19` is deprecated with known sandbox-escape CVEs** (used by the JS evaluator, not visual, but ships in the same service). **FIXED (Batch 6, documented):** added a `TODO(security, V-34)` at the `vm2` import in `evaluators/js/executionService.js`. Full migration to `isolated-vm`/E2B remains a tracked follow-up (out of the visual-evaluator scope).
 - [x] **V-35 — Dependency bloat:** `cors`, `body-parser`, `multer`, `node-cron`, `lodash` appear unused by the running paths. **FIXED (Batch 1):** grep-confirmed 0 source uses; removed all five from `package.json`.
 - [x] **V-36 — Static server binds all interfaces.** **FIXED (Batch 5):** `server.listen(0, '127.0.0.1')` — loopback only.
 - [x] **V-37 — No `.env.example`.** **FIXED (Batch 1):** added `.env.example` documenting server/auth/Redis/OpenAI/Groq/E2B/SSRF-allowlist/logging vars.

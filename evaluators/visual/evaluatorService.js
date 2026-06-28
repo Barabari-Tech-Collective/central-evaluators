@@ -32,20 +32,51 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+// Consistent capture geometry for student vs reference (V-23/V-26).
+const VIEWPORT = { width: 1366, height: 900 };
+
+// Reference-screenshot cache (V-29): the reference design is identical across all
+// submissions of an assignment, so render it once per (assignmentId, expectedUrl)
+// and reuse the PNG buffer. Stores in-flight promises to dedupe concurrent jobs.
+const EXPECTED_CACHE = new Map(); // key -> Promise<Buffer>
+const EXPECTED_CACHE_MAX = 20;
+
+function setExpectedCache(key, val) {
+  if (EXPECTED_CACHE.size >= EXPECTED_CACHE_MAX) {
+    EXPECTED_CACHE.delete(EXPECTED_CACHE.keys().next().value); // evict oldest
+  }
+  EXPECTED_CACHE.set(key, val);
+}
+
+async function renderExpectedScreenshot(context, expectedUrl) {
+  // V-03: re-validate right before navigating (defense in depth vs DNS rebinding).
+  await assertSafeUrl(expectedUrl);
+  const page = await context.newPage();
+  try {
+    await page.goto(expectedUrl, { waitUntil: "networkidle", timeout: 30000 }); // V-24
+    await page.evaluate(() => document.fonts && document.fonts.ready).catch(() => {});
+    return await page.screenshot({ fullPage: false }); // V-26
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 export async function evaluateStudentsWithVision({
   jobId,
+  assignmentId,
   studentId,
   studentName,
   repoPath,
   rubricText,
-  expectedUrl
+  expectedUrl,
+  entryFile = null
 }) {
   if (!repoPath || !rubricText || !expectedUrl) {
     throw new Error("Missing required inputs");
   }
 
   const rubric = await parseRubricWithSelectors(rubricText);
-  const student = await scanStudentFolders(repoPath);
+  const student = await scanStudentFolders(repoPath, entryFile);
 
   const results = [];
   const name = studentName;
@@ -77,20 +108,22 @@ export async function evaluateStudentsWithVision({
     const localUrl = started.url;
 
     browser = await browserPool.borrow();
-    context = await browser.newContext();
+    context = await browser.newContext({ viewport: VIEWPORT }); // V-23
 
-    // ---- Reference (expected) screenshot ----
-    // V-03: re-validate right before navigating (defense in depth vs DNS rebinding).
-    await assertSafeUrl(expectedUrl);
-
-    const expectedPath = path.join(workDir, "expected.png");
-    const expectedPage = await context.newPage();
-    await expectedPage.goto(expectedUrl, { timeout: 30000 });
-    // V-26: fullPage:false caps the screenshot to the viewport — a pathological
-    // student/reference page can't blow memory with a 50k-px-tall capture.
-    await expectedPage.screenshot({ path: expectedPath, fullPage: false });
-    await expectedPage.close();
-    const expectedImg = await fs.readFile(expectedPath);
+    // ---- Reference (expected) screenshot, cached per assignment (V-29) ----
+    const cacheKey = `${assignmentId || ""}::${expectedUrl}`;
+    let expectedPromise = EXPECTED_CACHE.get(cacheKey);
+    if (!expectedPromise) {
+      expectedPromise = renderExpectedScreenshot(context, expectedUrl);
+      setExpectedCache(cacheKey, expectedPromise);
+    }
+    let expectedImg;
+    try {
+      expectedImg = await expectedPromise;
+    } catch (err) {
+      EXPECTED_CACHE.delete(cacheKey); // don't cache a failure
+      throw err;
+    }
 
     const relativeHtml = student.html
       .replace(student.basePath, "")
@@ -99,7 +132,8 @@ export async function evaluateStudentsWithVision({
 
     const page = await context.newPage();
     try {
-      const responsePage = await page.goto(url, { timeout: 30000 });
+      const responsePage = await page.goto(url, { waitUntil: "networkidle", timeout: 30000 }); // V-24
+      await page.evaluate(() => document.fonts && document.fonts.ready).catch(() => {}); // V-24
       logger.debug(`Opening student url: ${url} status: ${responsePage?.status()}`);
 
       const screenshotPath = path.join(workDir, `${studentId || name}.png`);

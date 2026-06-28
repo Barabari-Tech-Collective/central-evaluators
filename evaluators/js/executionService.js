@@ -1,5 +1,7 @@
 // executionService.js
 
+// TODO(security, V-34): vm2 is deprecated and has known sandbox-escape CVEs.
+// Migrate JS execution to isolated-vm or an E2B sandbox. See VISUAL_EVALUATOR_AUDIT.md V-34.
 import { VM } from "vm2";
 
 export function runJavaScript({
