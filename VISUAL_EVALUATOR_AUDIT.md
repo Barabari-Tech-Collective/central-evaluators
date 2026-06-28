@@ -145,7 +145,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 
 ### 🔴 Critical
 
-- [ ] **V-01 — Playwright is a `devDependency`; the visual evaluator cannot run in production.**
+- [x] **V-01 — Playwright is a `devDependency`; the visual evaluator cannot run in production.** **FIXED (Batch 1):** moved `playwright` to `dependencies`, added `postinstall: playwright install chromium`.
   `browserPool.js` and `evaluatorService.js` do `import { chromium } from 'playwright'` at module load, but `playwright` is under `devDependencies` and is **not present in `node_modules`** in this checkout. `npm ci --omit=dev` (standard prod install) will not install it, and the Chromium binary is never fetched.
   **Impact:** `initializeVisualWorker()` throws on startup → `startServer()` `process.exit(1)` → whole service dead.
   **Fix:**
@@ -283,13 +283,13 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 
 ### ⚪ Low / hygiene
 
-- [ ] **V-31 — `node_modules` is committed (1861 files, and incomplete — Playwright missing).** `.gitignore` lists `node_modules` but it was committed earlier so it's still tracked. **Fix:** `git rm -r --cached node_modules && git commit`.
-- [ ] **V-32 — `logs/` is committed (`combined.log`, `error.log`, `workers.log`).** Runtime logs in VCS → churn + possible secret/PII leak. **Fix:** add `logs/` to `.gitignore`, `git rm -r --cached logs`.
+- [x] **V-31 — `node_modules` is committed (1861 files, and incomplete — Playwright missing).** **FIXED (Batch 1):** `git rm -r --cached node_modules`; still ignored.
+- [x] **V-32 — `logs/` is committed (`combined.log`, `error.log`, `workers.log`).** **FIXED (Batch 1):** `git rm -r --cached logs`; added `logs/`, `*.log`, `temp/`, `screenshots/`, `final_scores.json` to `.gitignore`.
 - [ ] **V-33 — Debug `console.log` noise:** `getJobStatus` logs the whole job; `evaluatorService` dumps the full rubric and student URL; etc. **Fix:** route through the logger at `debug` level; never dump full job/secret payloads.
 - [ ] **V-34 — `vm2@3.9.19` is deprecated with known sandbox-escape CVEs** (used by the JS evaluator, not visual, but ships in the same service). **Fix:** migrate JS execution to `isolated-vm` or an E2B sandbox.
-- [ ] **V-35 — Dependency bloat:** `cors`, `body-parser`, `multer`, `node-cron`, `lodash` appear unused by the running paths. **Fix:** prune to shrink the attack surface and install size.
+- [x] **V-35 — Dependency bloat:** `cors`, `body-parser`, `multer`, `node-cron`, `lodash` appear unused by the running paths. **FIXED (Batch 1):** grep-confirmed 0 source uses; removed all five from `package.json`.
 - [ ] **V-36 — Static server binds all interfaces.** `server.listen(0)` (no host) binds `0.0.0.0`/`::`, exposing the student site on the network during eval. **Fix:** `server.listen(0, '127.0.0.1')`.
-- [ ] **V-37 — No `.env.example`.** Required keys (`OPENAI_API_KEY`, `REDIS_*`, `PORT`, `LOG_*`) are undocumented. **Fix:** add `.env.example`.
+- [x] **V-37 — No `.env.example`.** **FIXED (Batch 1):** added `.env.example` documenting server/auth/Redis/OpenAI/Groq/E2B/SSRF-allowlist/logging vars.
 - [ ] **V-38 — `expected.replace("url contains ", "")` mismatches the rubric prompt.** `behaviourService` strips a `"url contains "` prefix the rubric prompt never produces (it emits `"expected": "twitter.com"`). Dead/fragile code. **Fix:** drop the strip or align the rubric contract; validate `expected` is a non-empty string before `.replace`/`.includes` (it will throw if `expected` is missing).
 
 ---

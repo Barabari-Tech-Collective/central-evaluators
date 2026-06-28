@@ -1,2 +1,15 @@
+# secrets
 .env
+.env.local
+
+# deps
 node_modules
+
+# runtime logs
+logs/
+*.log
+
+# evaluator runtime artifacts
+temp/
+evaluators/visual/screenshots/
+evaluators/visual/final_scores.json
