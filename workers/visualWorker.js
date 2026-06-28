@@ -15,7 +15,7 @@ import queueManager from '../config/queueManager.js';
 import logger from '../config/logger.js';
 import { getBrowserPool } from '../evaluators/visual/browserPool.js';
 import { evaluateStudentsWithVision } from '../evaluators/visual/evaluatorService.js';
-import { cloneGitRepo, deleteRepo } from '../evaluators/visual/repoService.js';
+import { cloneGitRepo, deleteRepo, sweepStaleRepos } from '../evaluators/visual/repoService.js';
 
 let visualWorker = null;
 
@@ -26,6 +26,9 @@ let visualWorker = null;
 export async function initializeVisualWorker() {
   try {
     logger.info('Initializing Visual Worker...');
+
+    // Clean up clone dirs orphaned by a previous crash (V-25)
+    await sweepStaleRepos();
 
     // Initialize browser pool first
     await getBrowserPool(3);  // Pool of 3 browsers
@@ -106,14 +109,13 @@ async function processVisualJob(job) {
         });
 const result =
   await evaluateStudentsWithVision({
+    jobId,
     studentId:
       submission.studentId,
 
     studentName:
       submission.studentName,
 
-    // repoUrl:
-    //   submission.repoUrl,
     repoPath,
 
     rubricText,

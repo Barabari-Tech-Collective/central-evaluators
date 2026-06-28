@@ -6,12 +6,12 @@ import logger from './config/logger.js';
 import redisConnection from './config/redis.js';
 
 // Initialize workers
-import { initializeVisualWorker } from './workers/visualWorker.js';
-import { initializeJsWorker } from './workers/jsWorker.js';
-import { initializePythonWorker } from './workers/pythonWorker.js';
-import { initializeReactWorker } from './workers/reactWorker.js';
-import { initializeBackendWorker } from './workers/backendWorker.js';
-import { initializeFullstackWorker } from './workers/fullstackWorker.js';
+import { initializeVisualWorker, stopVisualWorker } from './workers/visualWorker.js';
+import { initializeJsWorker, stopJsWorker } from './workers/jsWorker.js';
+import { initializePythonWorker, stopPythonWorker } from './workers/pythonWorker.js';
+import { initializeReactWorker, stopReactWorker } from './workers/reactWorker.js';
+import { initializeBackendWorker, stopBackendWorker } from './workers/backendWorker.js';
+import { initializeFullstackWorker, stopFullstackWorker } from './workers/fullstackWorker.js';
 
 dotenv.config();
 
@@ -101,9 +101,39 @@ async function startServer() {
 
 startServer();
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('Shutting down gracefully...');
-  await queueManager.disconnect();
-  process.exit(0);
-});
+// Graceful shutdown (V-27)
+// Drain workers (waits for in-flight jobs + closes their browser pools),
+// then close queues/Redis. A hard-exit timer guards against a hung close
+// so we never leak zombie Chromium processes across a deploy.
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info(`Received ${signal}, shutting down gracefully...`);
+
+  const hardExit = setTimeout(() => {
+    logger.error('Graceful shutdown timed out — forcing exit');
+    process.exit(1);
+  }, 30000);
+  hardExit.unref();
+
+  try {
+    await Promise.allSettled([
+      stopVisualWorker(),
+      stopJsWorker(),
+      stopPythonWorker(),
+      stopReactWorker(),
+      stopBackendWorker(),
+      stopFullstackWorker()
+    ]);
+    await queueManager.disconnect();
+    logger.info('Shutdown complete');
+    process.exit(0);
+  } catch (err) {
+    logger.error('Error during shutdown:', err);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
