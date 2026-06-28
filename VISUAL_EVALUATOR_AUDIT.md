@@ -285,6 +285,12 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [x] **V-37 — No `.env.example`.** **FIXED (Batch 1):** added `.env.example` documenting server/auth/Redis/OpenAI/Groq/E2B/SSRF-allowlist/logging vars.
 - [x] **V-38 — `expected.replace("url contains ", "")` mismatches the rubric prompt.** **FIXED (Batch 3):** `behaviourService.js` only strips the prefix when `expected` is a non-empty string and falls back to "any navigation = pass" when `expected` is absent.
 
+### 🆕 Found during live testing (not yet fixed)
+
+- [ ] **V-41 — 🔴 Backend & fullstack workers don't `await` the evaluator → one bad job crashes the whole gateway.** `workers/backendWorker.js` and `workers/fullstackWorker.js` do `const results = evaluateBackendProject(job.data)` (no `await`) and return `{ success, results }` with `results` still a pending Promise. The job is marked "completed" with a meaningless value, and when the promise later rejects (e.g. E2B sandbox failure) it becomes an **unhandled rejection that kills the Node process** — taking *all* evaluators down. Observed live: a backend submission crashed the server. **Fix:** `await` the evaluator inside the worker (matches react/python which already do), and add a `process.on('unhandledRejection')` guard.
+- [ ] **V-39 — 🟠 Redirect-time SSRF bypass.** `assertSafeUrl` validates the *initial* host, but an `expectedUrl` like a `tinyurl` 30x-redirects to another host that is never re-validated (observed: `tinyurl.com` → `rylenlobo.github.io`). A shortener could redirect to an internal IP. **Fix:** after `goto`, re-check `page.url()` with `assertSafeUrl`, or block cross-host redirects to non-allowlisted/private targets.
+- [ ] **V-40 — 🟡 "Renders but blank / non-functional" isn't flagged.** An unbuilt React submission (blank page) and an unstyled JS submission still get auto-scored. **Fix:** if served page has ~0 visible text / a 404 on its main module / failed core interaction, set `manualCorrection` instead of scoring (like missing-files).
+
 ---
 
 ## 5. Breaking-point analysis — *when it breaks and how to fix it in production*
