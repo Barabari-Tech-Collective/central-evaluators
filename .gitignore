@@ -13,3 +13,6 @@ logs/
 temp/
 evaluators/visual/screenshots/
 evaluators/visual/final_scores.json
+
+# local test/screenshot output
+manual-test-output/
