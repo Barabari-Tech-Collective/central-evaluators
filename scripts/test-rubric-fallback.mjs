@@ -1,75 +1,78 @@
 /**
- * Infra-free reproduction of the rubric-parse fragility (V-09).
+ * Regression test for rubric parsing/validation (V-09).
  *
- * Mirrors the parse path in evaluators/visual/rubricService.js:
- *   JSON.parse(raw.replace(/```json|```/g, '').trim())   // returns [] on throw
- * and the downstream assumption in evaluatorService.js:
- *   for (const item of rubric) { ... }                   // needs an ARRAY
+ * Imports the REAL pure validator from evaluators/visual/rubricSchema.js and
+ * asserts that realistic gpt-4o outputs are EITHER normalized into a usable
+ * array OR rejected with a typed RubricParseError — never silently turned into
+ * an empty rubric that scores a whole cohort 0.
  *
- * gpt-4o frequently wraps results in an object ({ "rubric": [...] }) or emits
- * prose around the JSON. This script shows how those shapes silently produce
- * an empty rubric (whole cohort scored 0) or a non-iterable (job fails ×3).
- *
- * Run: node scripts/test-rubric-fallback.mjs
+ * Run: node scripts/test-rubric-fallback.mjs   (exit 0 = fixed)
  */
+import { normalizeRubric, RubricParseError } from "../evaluators/visual/rubricSchema.js";
 
-function parseLikeService(raw) {
-  try {
-    return JSON.parse(raw.replace(/```json|```/g, "").trim());
-  } catch (err) {
-    return []; // <-- silent fallback, same as the source
-  }
-}
-
-function isUsableRubric(parsed) {
-  // evaluatorService iterates with `for...of`; only a non-empty array works.
-  return Array.isArray(parsed) && parsed.length > 0;
-}
-
+// With response_format:json_object the model returns a parsed JS object/array;
+// these fixtures represent the parsed shapes we must handle.
 const cases = [
   {
-    name: "ideal array (works)",
-    raw: '[{"description":"favicon","type":"dom","weight":10,"checks":[{"selector":"link[rel=\'icon\']","condition":"exists"}]}]',
+    name: "bare array",
+    input: [{ description: "favicon", type: "dom", weight: 10, checks: [] }],
+    expect: "array",
   },
   {
-    name: "fenced array (works after strip)",
-    raw: '```json\n[{"description":"x","type":"visual","weight":20,"checks":[]}]\n```',
+    name: "object-wrapped under items (was V-09 silent-0)",
+    input: { items: [{ description: "x", type: "visual", weight: 20, checks: [] }] },
+    expect: "array",
   },
   {
-    name: "object-wrapped (V-09: non-array → cohort silently 0)",
-    raw: '{"rubric":[{"description":"x","type":"visual","weight":20,"checks":[]}]}',
+    name: "object-wrapped under rubric",
+    input: { rubric: [{ description: "x", type: "dom", weight: 5, checks: [] }] },
+    expect: "array",
   },
   {
-    name: "prose around JSON (V-09: parse throws → [])",
-    raw: 'Sure! Here is the JSON:\n[{"description":"x","type":"dom","weight":10,"checks":[]}]',
+    name: "empty array → typed error (flagged, not silent-0)",
+    input: [],
+    expect: "throw",
   },
   {
-    name: "trailing comma (V-09: parse throws → [])",
-    raw: '[{"description":"x","type":"dom","weight":10,},]',
+    name: "missing weight → typed error",
+    input: { items: [{ description: "x", type: "dom" }] },
+    expect: "throw",
+  },
+  {
+    name: "invalid type → typed error",
+    input: { items: [{ description: "x", type: "color", weight: 5 }] },
+    expect: "throw",
+  },
+  {
+    name: "non-array/non-object → typed error",
+    input: "not json",
+    expect: "throw",
   },
 ];
 
-let silentFailures = 0;
-console.log("--- Rubric parse reproduction ---\n");
+let failures = 0;
+console.log("--- Rubric validation ---\n");
+
 for (const c of cases) {
-  const parsed = parseLikeService(c.raw);
-  const usable = isUsableRubric(parsed);
-  const shape = Array.isArray(parsed) ? `array(${parsed.length})` : typeof parsed;
-  console.log(`${usable ? "✅" : "❌"} ${c.name}`);
-  console.log(`    parsed shape: ${shape}, usable: ${usable}`);
-  if (!usable) {
-    silentFailures++;
-    console.log("    → downstream: empty/non-iterable rubric ⇒ student(s) scored 0 with no signal.\n");
-  } else {
-    console.log("");
+  let outcome, detail;
+  try {
+    const arr = normalizeRubric(c.input);
+    outcome = "array";
+    detail = `array(${arr.length})`;
+  } catch (err) {
+    outcome = err instanceof RubricParseError ? "throw" : "wrong-error";
+    detail = `${err.name}: ${err.message}`;
   }
+
+  const ok = outcome === c.expect;
+  if (!ok) failures++;
+  console.log(`${ok ? "✅" : "❌"} ${c.name}`);
+  console.log(`    → ${detail} (expected ${c.expect})\n`);
 }
 
 console.log(
-  silentFailures === 0
-    ? "All rubric shapes parse into a usable array — V-09 appears FIXED."
-    : `${silentFailures}/${cases.length} realistic model outputs silently fail — V-09 present. ` +
-      "Fix with response_format:json_object + schema validation + flag-don't-zero."
+  failures === 0
+    ? "All rubric shapes are handled (usable array or typed RubricParseError) — V-09 fixed."
+    : `${failures} case(s) behaved unexpectedly.`
 );
-
-process.exit(silentFailures === 0 ? 0 : 1);
+process.exit(failures === 0 ? 0 : 1);
