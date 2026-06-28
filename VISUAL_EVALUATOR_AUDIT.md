@@ -169,12 +169,12 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** require an API key / mTLS / network policy; add `express-rate-limit`; bind only to the internal network.
   **Verify:** unauthenticated `POST /evaluate` → 401.
 
-- [ ] **V-05 — Browser-pool leak when the reference screenshot fails → pool exhaustion.**
+- [x] **V-05 — Browser-pool leak when the reference screenshot fails → pool exhaustion.** **FIXED (Batch 2):** entire body from `borrow()` on is wrapped in `try/finally`; `finally` unconditionally closes context, returns the browser, closes the server, and removes the per-job dir. Reference `goto` keeps its 30s timeout.
   In `evaluateStudentsWithVision`, `browserPool.borrow()`, `browser.newContext()` and `expectedPage.goto(expectedUrl)` run **outside** the `try/catch`. If `expectedUrl` is slow/unreachable (default 30s nav, no `waitUntil`), `goto` throws, the function throws, and the borrowed browser + context are **never returned/closed**. After 3 such failures the pool of 3 is empty; every subsequent job blocks 60s in `borrow()` then fails — the whole visual queue wedges permanently until restart.
   **Fix:** wrap the *entire* body (from `borrow()` onward) in `try/finally`; return the browser and close the context/server in `finally` unconditionally. Give `expectedUrl` navigation an explicit timeout and `waitUntil: 'networkidle'`. Cache the reference screenshot (see `V-29`) so it isn't re-fetched per submission.
   **Verify:** point `expectedUrl` at a dead host; run 5 jobs; confirm `browserPool.getStats().available` returns to 3.
 
-- [ ] **V-06 — Static HTTP server leak in the `flags > 0` early return.**
+- [x] **V-06 — Static HTTP server leak in the `flags > 0` early return.** **FIXED (Batch 2):** `startStaticServer` moved to *after* the flags check; `server.close()` now lives in the single `finally` so it always runs.
   `startStaticServer` is started before the missing-files check. When `student.flags.length > 0` the code returns early and closes the context + returns the browser, **but never calls `server.close()`**. Every submission with missing HTML/CSS leaks a listening socket + an event-loop handle. The server is also started uselessly before we know we'll bail.
   **Fix:** move `startStaticServer` to *after* the flags check, and/or close the server in a single `finally`. Best: one `finally` block owns server + context + browser cleanup.
   **Verify:** submit 20 repos with no HTML; `lsof -p <pid> | grep -c LISTEN` does not grow.
@@ -206,7 +206,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** detect both cases — race `waitForEvent('page')` against `page.waitForNavigation()`; if same-tab, read `page.url()` and navigate back / reload before the next check. Reset page state between behavior checks (clicks mutate the page). Add a short per-check timeout.
   **Verify:** a same-tab link to `twitter.com` passes and completes in <5s.
 
-- [ ] **V-12 — `--single-process` Chromium is unstable under concurrency.**
+- [x] **V-12 — `--single-process` Chromium is unstable under concurrency.** **FIXED (Batch 2):** removed `--single-process` from `browserPool._launch()`; kept `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage`.
   `browserPool.js` launches with `--single-process`. Combined with concurrency 2 and multiple contexts/pages, this flag is a well-known source of renderer crashes / "Target closed". Memory is "reduced" at the cost of stability.
   **Fix:** drop `--single-process`; keep `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage`. Tune memory via pool size and `--js-flags=--max-old-space-size` if needed.
   **Verify:** run a 50-job batch; zero "Target closed"/renderer crashes.
@@ -221,12 +221,12 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** `username: process.env.REDIS_USERNAME || undefined`.
   **Verify:** connect to an ACL-enabled Redis with a username.
 
-- [ ] **V-15 — Dead browsers poison the pool (no validation on borrow/return).**
+- [x] **V-15 — Dead browsers poison the pool (no validation on borrow/return).** **FIXED (Batch 2):** `borrow()` skips disconnected idle browsers; `return()` drops a dead browser and `_replace()` relaunches one so pool size is preserved. Extracted `_launch()`.
   If a pooled browser crashes (very likely given `V-12`), it stays in `this.browsers`/`available` and gets handed out again → repeated failures. `healthCheck()` exists but is never called on the hot path.
   **Fix:** on `return`, verify `browser.isConnected()`; if not, drop it and lazily relaunch a replacement so the pool size is maintained. Optionally validate on `borrow`.
   **Verify:** kill a browser mid-batch; pool self-heals and subsequent jobs succeed.
 
-- [ ] **V-16 — Shared artifact files cause races and write into the source tree.**
+- [x] **V-16 — Shared artifact files cause races and write into the source tree.** **FIXED (Batch 2):** per-job `fs.mkdtemp` dir under `os.tmpdir()`; screenshots named by `studentId`; the `final_scores.json` write into the source tree was removed (results returned via the job).
   `expected.png` (constant path), `final_scores.json` (constant path), and `<studentName>.png` are written under `evaluators/visual/screenshots` / source dir. With concurrency 2, two jobs overwrite each other's `expected.png` between write and read; `final_scores.json` only ever reflects the last job; duplicate `studentName`s collide. Writing into the deployed code dir also breaks on read-only/container filesystems.
   **Fix:** use a per-job temp dir (`fs.mkdtemp`), name files by `jobId`/`studentId`, and don't persist `final_scores.json` from inside the eval (return it via the job result; persist centrally if needed).
   **Verify:** run two jobs concurrently with the same `expectedUrl` but different students; both get correct, non-cross-contaminated screenshots.
@@ -263,13 +263,13 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [ ] **V-24 — Screenshots taken without waiting for fonts/images/CSS.**
   `goto` waits for `load` only; webfonts/lazy CSS may not be applied → flaky visual scores. **Fix:** `waitUntil: 'networkidle'` (or wait for `document.fonts.ready` + a short settle) before screenshotting.
 
-- [ ] **V-25 — `screenshots/` and `temp/` are never cleaned; orphaned on crash.**
+- [x] **V-25 — `screenshots/` and `temp/` are never cleaned; orphaned on crash.** **FIXED (Batch 2):** per-job temp dir deleted in `finally`; `sweepStaleRepos()` removes `<cwd>/temp` clones >2h old at worker startup.
   Per-student PNGs accumulate forever; if the process dies mid-job, `temp/visual_*` clones are orphaned (only the worker `finally` deletes them). Disk fills over a semester of batches. **Fix:** use per-job temp dirs deleted in `finally`; add a startup sweep of stale `temp/`/`screenshots/` older than N hours; alert on disk usage.
 
 - [ ] **V-26 — No cap on `fullPage` screenshot dimensions.**
   A student page 50,000px tall produces a giant screenshot → memory spike, slow base64, and OpenAI may reject the image. **Fix:** cap height (clip region) or set `fullPage: false` with a fixed viewport; reject pathological pages.
 
-- [ ] **V-27 — Graceful shutdown doesn't drain workers or close the browser pool.**
+- [x] **V-27 — Graceful shutdown doesn't drain workers or close the browser pool.** **FIXED (Batch 2):** `server.js` handles SIGTERM **and** SIGINT, calls every `stop*Worker()` (each drains its worker + closes its pool) then `queueManager.disconnect()`, with a 30s hard-exit guard; idempotent.
   `SIGTERM` handler only calls `queueManager.disconnect()` — it does not `await visualWorker.close()` or `browserPool.close()`, and `SIGINT` isn't handled. Result: in-flight jobs are killed and **zombie Chromium processes leak** in the container across deploys. **Fix:** on SIGTERM/SIGINT, stop accepting (`worker.close()` waits for active jobs), then close the pool, then disconnect Redis, then exit; add a hard-exit timeout.
 
 - [ ] **V-28 — No payload / batch-size limits.**

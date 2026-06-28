@@ -22,6 +22,39 @@ class BrowserPool {
   }
 
   /**
+   * Launch a single hardened headless Chromium.
+   * NOTE: `--single-process` removed (V-12) — it makes Chromium crash-prone
+   * under concurrency. Memory is controlled via pool size instead.
+   */
+  async _launch() {
+    return chromium.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage'
+      ]
+    });
+  }
+
+  /**
+   * Replace a dead browser so the pool keeps its size (V-15).
+   * Fire-and-forget safe: errors are logged, never thrown to callers.
+   */
+  async _replace(deadBrowser) {
+    const idx = this.browsers.indexOf(deadBrowser);
+    if (idx !== -1) this.browsers.splice(idx, 1);
+    try {
+      const fresh = await this._launch();
+      this.browsers.push(fresh);
+      this.available.push(fresh);
+      logger.warn('Replaced a dead pooled browser');
+    } catch (err) {
+      logger.error('Failed to relaunch replacement browser:', err.message);
+    }
+  }
+
+  /**
    * Initialize browser pool
    * Should be called once at worker startup
    */
@@ -35,15 +68,7 @@ class BrowserPool {
       logger.info(`🌐 Initializing browser pool (size: ${this.poolSize})...`);
 
       for (let i = 0; i < this.poolSize; i++) {
-        const browser = await chromium.launch({
-          headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',  // Prevent memory issues
-            '--single-process'           // Reduce memory overhead
-          ]
-        });
+        const browser = await this._launch();
 
         this.browsers.push(browser);
         this.available.push(browser);
@@ -71,33 +96,47 @@ class BrowserPool {
 
     const startTime = Date.now();
 
-    // Wait for available browser
-    while (this.available.length === 0) {
-      if (Date.now() - startTime > timeout) {
-        throw new Error(`Timeout waiting for available browser (${timeout}ms)`);
+    // Wait for a *healthy* available browser
+    while (true) {
+      if (this.available.length === 0) {
+        if (Date.now() - startTime > timeout) {
+          throw new Error(`Timeout waiting for available browser (${timeout}ms)`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
       }
 
-      // Small wait before checking again
-      await new Promise(resolve => setTimeout(resolve, 100));
+      const candidate = this.available.pop();
+
+      // Skip / heal a browser that died while idle (V-15)
+      if (typeof candidate.isConnected === 'function' && !candidate.isConnected()) {
+        logger.warn('Discarding dead idle browser from pool');
+        this._replace(candidate);   // async, fire-and-forget
+        continue;
+      }
+
+      this.currentlyUsing.add(candidate);
+      logger.debug(`Browser borrowed. Available: ${this.available.length}/${this.poolSize}`);
+      return candidate;
     }
-
-    const browser = this.available.pop();
-    this.currentlyUsing.add(browser);
-
-    logger.debug(`Browser borrowed. Available: ${this.available.length}/${this.poolSize}`);
-
-    return browser;
   }
 
   /**
-   * Return browser to pool
+   * Return browser to pool. If it died during use, drop it and relaunch a
+   * replacement so the pool never silently shrinks (V-15).
    */
   return(browser) {
-    if (this.currentlyUsing.has(browser)) {
-      this.currentlyUsing.delete(browser);
-      this.available.push(browser);
-      logger.debug(`Browser returned. Available: ${this.available.length}/${this.poolSize}`);
+    if (!this.currentlyUsing.has(browser)) return;
+    this.currentlyUsing.delete(browser);
+
+    if (typeof browser.isConnected === 'function' && !browser.isConnected()) {
+      logger.warn('Returned browser is dead; relaunching replacement');
+      this._replace(browser);       // async, fire-and-forget
+      return;
     }
+
+    this.available.push(browser);
+    logger.debug(`Browser returned. Available: ${this.available.length}/${this.poolSize}`);
   }
 
   /**
