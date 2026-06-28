@@ -184,7 +184,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** revert the prompt to ask the model for the **visual-items subtotal only** (and ideally as JSON: `{"visualScore": <n>, "breakdown":[...], "feedback":"..."}`), or stop adding `domScore`/`behaviorScore` separately. Pick one source of truth.
   **Verify:** unit-test the scoring with a rubric of 1 dom (w=10, pass) + 1 visual (w=20, model=15) → expect 25, not 35.
 
-- [ ] **V-08 — BullMQ v5 ignores the `timeout` job option → no timeout is enforced.**
+- [x] **V-08 — BullMQ v5 ignores the `timeout` job option → no timeout is enforced.** **FIXED (Batch 4):** removed the dead `timeout` job option; the worker now wraps the evaluation in `withTimeout(config.timeout)` (reused `react/utils/timeout.js`). `goto` keeps explicit 30s timeouts.
   `queueManager.js` sets `defaultJobOptions.timeout` and `QUEUE_CONFIG.*.timeout`, but BullMQ removed the per-job `timeout` option in v4+. (Confirmed: bullmq 5.76.8.) A hung `goto`, hung OpenAI call, or infinite-loop student page runs until the lock stalls, not until 5 minutes.
   **Fix:** enforce timeouts in code — wrap the evaluation in `Promise.race([evaluate(), timeout(ms)])`, and/or cap every external op (`goto` timeout, OpenAI `timeout`/`AbortSignal`, clone timeout). Remove the dead `timeout` options to avoid false confidence.
   **Verify:** a job whose student page hangs is failed at the configured budget, not at lock-stall time.
@@ -211,12 +211,12 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** drop `--single-process`; keep `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage`. Tune memory via pool size and `--js-flags=--max-old-space-size` if needed.
   **Verify:** run a 50-job batch; zero "Target closed"/renderer crashes.
 
-- [ ] **V-13 — One shared ioredis connection for the Queue and all Workers; `commandTimeout` set on it.**
+- [x] **V-13 — One shared ioredis connection for the Queue and all Workers; `commandTimeout` set on it.** **FIXED (Batch 4):** every worker now uses `redisConnection.getClient().duplicate()` (dedicated blocking connection); `commandTimeout` removed from the connection config. `maxRetriesPerRequest: null` kept.
   `redisConnection.getClient()` returns a single client reused by every `Queue` and every `Worker`. BullMQ workers issue **blocking** commands (`BZPOPMIN`/`BRPOPLPUSH`) and require their own connection; sharing with non-blocking queue traffic causes contention and "command timed out" errors. `commandTimeout: 30000` actively aborts the workers' long blocking reads.
   **Fix:** give each `Worker` its own connection (`redisConnection.getClient().duplicate()` or a factory). Do **not** set `commandTimeout` on worker connections. Keep `maxRetriesPerRequest: null` (already correct).
   **Verify:** idle the workers >30s; no recurring command-timeout errors in logs.
 
-- [ ] **V-14 — Redis `username` parsed as an integer.**
+- [x] **V-14 — Redis `username` parsed as an integer.** **FIXED (Batch 4):** `username: process.env.REDIS_USERNAME || undefined` (string, not `parseInt`).
   `config/redis.js`: `username: parseInt(process.env.REDIS_USERNAME) || 0`. Username is a string (e.g. `"default"`); `parseInt` → `NaN` → `0`. Breaks ACL auth on managed Redis (Redis Cloud/Elasticache with ACL).
   **Fix:** `username: process.env.REDIS_USERNAME || undefined`.
   **Verify:** connect to an ACL-enabled Redis with a username.
@@ -231,7 +231,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** use a per-job temp dir (`fs.mkdtemp`), name files by `jobId`/`studentId`, and don't persist `final_scores.json` from inside the eval (return it via the job result; persist centrally if needed).
   **Verify:** run two jobs concurrently with the same `expectedUrl` but different students; both get correct, non-cross-contaminated screenshots.
 
-- [ ] **V-17 — No retry classification → permanent failures retried 3× (cost amplification).**
+- [x] **V-17 — No retry classification → permanent failures retried 3× (cost amplification).** **FIXED (Batch 4):** the worker rethrows permanent failures (`RubricParseError`, "Missing required inputs") as BullMQ `UnrecoverableError` (no retry); transient errors still retry.
   `attempts: 3` + exponential backoff is global. Deterministic failures (bad repo URL, rubric parse error, unreachable `expectedUrl`) re-run the full pipeline 3×, including paid gpt-4o vision calls.
   **Fix:** classify errors. Transient (network blip, browser crash) → retry. Permanent (validation, parse, 4xx clone) → `throw new UnrecoverableError(...)` (BullMQ) so it fails once. Move the expensive OpenAI call as late as possible and short-circuit on deterministic 0s.
   **Verify:** a malformed repo URL produces exactly one failed attempt.
@@ -241,7 +241,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
   **Fix:** `temperature: 0`, `seed: <fixed>`, `response_format: json_object`; log the raw model response with the score for auditability.
   **Verify:** same input → same score across 3 runs.
 
-- [ ] **V-19 — `lockDuration` 30s is too short for long visual jobs → stall → duplicate processing.**
+- [x] **V-19 — `lockDuration` 30s is too short for long visual jobs → stall → duplicate processing.** **FIXED (Batch 4):** `lockDuration: 180000`, `lockRenewTime: 60000`; combined with the real timeout (V-08) and screenshot cap (V-26) keeps the event loop responsive.
   Worker `lockDuration: 30000` with `maxStalledCount: 2`. Visual jobs routinely exceed 30s (two 30s gotos + two gpt-4o calls). Lock renewal (15s) usually saves it, but any event-loop block (huge `fullPage` base64 encode) delays renewal → job marked stalled → re-run → duplicate OpenAI spend / duplicate result.
   **Fix:** raise `lockDuration` to comfortably exceed the worst-case job (e.g. 120–180s), keep `lockRenewTime ≈ lockDuration/2`, and avoid blocking the event loop (stream/encode off-thread, cap screenshot size — `V-26`).
   **Verify:** a 90s job is never re-delivered.

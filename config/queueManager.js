@@ -107,10 +107,11 @@ class QueueManager {
               type: 'exponential',
               delay: 2000  // Start with 2 sec, exponential increase
             },
-            
-            // Job timeout (ms)
-            timeout: config.timeout,
-            
+
+            // NOTE (V-08): BullMQ v5 removed the per-job `timeout` option — it was
+            // a no-op. Real timeouts are now enforced inside the worker via
+            // withTimeout(config.timeout).
+
             // Remove completed jobs after 1 hour
             removeOnComplete: {
               age: 3600

@@ -8,11 +8,13 @@ dotenv.config();
 const redisConfig = {
   host: process.env.REDIS_HOST || '127.0.0.1',
   port: parseInt(process.env.REDIS_PORT) || 6379,
-  username: parseInt(process.env.REDIS_USERNAME) || 0,
+  // V-14: username is a STRING (e.g. "default" for Redis ACL), never parseInt.
+  username: process.env.REDIS_USERNAME || undefined,
   password: process.env.REDIS_PASSWORD || undefined,
- 
+
   connectTimeout: 30000,
-  commandTimeout: 30000,
+  // V-13: no commandTimeout — BullMQ workers issue long blocking commands
+  // (BZPOPMIN/BRPOPLPUSH); a command timeout would abort them.
   // Connection options
   retryStrategy: (times) => {
     const delay = Math.min(times * 50, 2000);
