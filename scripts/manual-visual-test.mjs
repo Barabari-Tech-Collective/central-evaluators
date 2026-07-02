@@ -123,6 +123,17 @@ async function main() {
     const domResults = await runDynamicDomChecks(page, RUBRIC);
     for (const [k, v] of Object.entries(domResults)) log(`  ${v ? "PASS" : "FAIL"}  ${k}`);
 
+    hr(); log("STEP 7.1 · V-40 verdict  (the decision the SHIPPED evaluator now makes)");
+    const httpStatus = resp?.status() ?? 0;
+    const blank = bodyText.trim().length < 3;
+    const badStatus = httpStatus >= 400;
+    if (blank || badStatus) {
+      log(`  → FLAG manualCorrection=true  (${blank ? "page rendered blank" : "HTTP " + httpStatus}); vision call SKIPPED.`);
+      log("    (Before V-40 this was silently scored; now it's routed to a human.)");
+    } else {
+      log("  → page has content → would proceed to gpt-4o vision scoring.");
+    }
+
     hr(); log("STEP 7.5 · Functional smoke  [EXTRA — not in shipped visual evaluator; this is what the react evaluator does properly]");
     try {
       const input = await page.$("#taskInput, input[type='text'], input:not([type])");
