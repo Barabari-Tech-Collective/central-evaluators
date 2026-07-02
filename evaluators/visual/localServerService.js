@@ -9,7 +9,13 @@ export async function startStaticServer(
     const server = http.createServer(
       (req, res) => {
         return handler(req, res, {
-          public: rootPath
+          public: rootPath,
+          // V-43: serve files literally. serve-handler defaults to cleanUrls
+          // (rewriting /about.html -> /about, with a 301), which breaks internal
+          // links and behavior checks that reference real filenames.
+          cleanUrls: false,
+          trailingSlash: false,
+          directoryListing: false
         });
       }
     );

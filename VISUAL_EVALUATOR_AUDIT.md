@@ -16,7 +16,7 @@ This is a **living document**. Every issue in §4 has a checkbox and a stable ID
 - §5 ("Breaking-point analysis") is the answer to *"when will it break and how do I fix it in production"* — read it before any large batch run.
 - §6 is the test plan + harness (`scripts/`).
 
-**Status (branch `developer-Arma`):** ✅ **all 42 findings (V-01…V-42) addressed** — the original 38 across 6 batched commits, plus 4 more (V-39…V-42) found during live testing. The original headline blocker (Playwright as a devDependency) is fixed and the regression suite (`npm run test:unit` — scoring, rubric, URL-guard) is green. Items needing a live Redis+Playwright+OpenAI stack to fully confirm are listed in §8.
+**Status (branch `developer-Arma`):** ✅ **all 43 findings (V-01…V-43) addressed** — the original 38 across 6 batched commits, plus 5 more (V-39…V-43) found during live/self testing. The original headline blocker (Playwright as a devDependency) is fixed and the regression suite (`npm run test:unit` — scoring, rubric, URL-guard) is green. Items needing a live Redis+Playwright+OpenAI stack to fully confirm are listed in §8.
 
 ---
 
@@ -291,6 +291,7 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [x] **V-39 — 🟠 Redirect-time SSRF bypass.** **FIXED:** `renderExpectedScreenshot` re-runs `assertSafeUrl(page.url())` after the reference `goto` when the final URL differs from the requested one, so a shortener/redirect to a private target is caught.
 - [x] **V-40 — 🟡 "Renders but blank / non-functional" isn't flagged.** **FIXED:** after the student screenshot, the evaluator checks HTTP status + visible text; a blank (`<3` chars) or `>=400` page is flagged `manualCorrection: true` (with `blankPage`) and the costly vision call is skipped. (Full end-to-end path needs a live OpenAI key; blank-input condition was confirmed live — the unbuilt React page rendered 0 chars.)
 - [x] **V-42 — 🟠 API clients constructed at import time crash the server on boot when a key is unset.** **FIXED:** made OpenAI/Groq clients lazy (`getOpenAI()`/`getClient()`/`getGroq()`) in `rubricService`, visual `evaluatorService`, backend & fullstack `feedbackService`, and js `aiFeedbackService`. Verified live: the server now boots with **no** OPENAI/GROQ keys (health 200, all workers up); a missing key only errors the specific evaluator that needs it.
+- [x] **V-43 — 🟡 Static server's `cleanUrls` rewrote `/x.html` → `/x`, breaking internal links & behavior checks.** **FIXED:** `localServerService` now passes `cleanUrls: false, trailingSlash: false, directoryListing: false` so files are served literally. Found by `scripts/self-test.mjs`: a `#nav` link to `about.html` landed on `/about` and failed the behavior check until fixed; now it passes (student_good behavior 20/20).
 
 ---
 
