@@ -113,6 +113,18 @@ async function startServer() {
 
 startServer();
 
+// V-41: last-resort safety net. A single evaluator's stray rejection must never
+// take the whole gateway down. Log it; keep serving. (Workers already await and
+// mark their own jobs failed — this only catches truly escaped rejections.)
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection (contained, not crashing):', reason);
+});
+process.on('uncaughtException', (err) => {
+  // A synchronous programmer error — log and let the process manager restart us.
+  logger.error('Uncaught exception — shutting down:', err);
+  shutdown('uncaughtException');
+});
+
 // Graceful shutdown (V-27)
 // Drain workers (waits for in-flight jobs + closes their browser pools),
 // then close queues/Redis. A hard-exit timer guards against a hung close
