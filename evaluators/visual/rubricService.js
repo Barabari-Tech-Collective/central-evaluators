@@ -3,9 +3,13 @@ import { RubricParseError, normalizeRubric } from "./rubricSchema.js";
 
 export { RubricParseError, normalizeRubric };
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// V-42: lazy init — constructing the client at import time crashes the whole
+// server on boot when OPENAI_API_KEY is unset (even for unrelated evaluators).
+let _openai;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
+}
 
 export async function parseRubricWithSelectors(text) {
   const prompt = `
@@ -47,7 +51,7 @@ Rubric:
 ${text}
 `;
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o",
     temperature: 0,
     response_format: { type: "json_object" },

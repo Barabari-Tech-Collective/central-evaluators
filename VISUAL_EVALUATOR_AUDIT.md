@@ -16,7 +16,7 @@ This is a **living document**. Every issue in §4 has a checkbox and a stable ID
 - §5 ("Breaking-point analysis") is the answer to *"when will it break and how do I fix it in production"* — read it before any large batch run.
 - §6 is the test plan + harness (`scripts/`).
 
-**Status (branch `developer-Arma`):** ✅ **all 38 findings (V-01…V-38) addressed** across 6 batched commits. The original headline blocker (Playwright as a devDependency) is fixed and the regression suite (`npm run test:unit` — scoring, rubric, URL-guard) is green. Items needing a live Redis+Playwright+OpenAI stack to fully confirm are listed in §8.
+**Status (branch `developer-Arma`):** ✅ **all 42 findings (V-01…V-42) addressed** — the original 38 across 6 batched commits, plus 4 more (V-39…V-42) found during live testing. The original headline blocker (Playwright as a devDependency) is fixed and the regression suite (`npm run test:unit` — scoring, rubric, URL-guard) is green. Items needing a live Redis+Playwright+OpenAI stack to fully confirm are listed in §8.
 
 ---
 
@@ -285,11 +285,12 @@ The architecture is fundamentally sound. The problems are in **packaging, resour
 - [x] **V-37 — No `.env.example`.** **FIXED (Batch 1):** added `.env.example` documenting server/auth/Redis/OpenAI/Groq/E2B/SSRF-allowlist/logging vars.
 - [x] **V-38 — `expected.replace("url contains ", "")` mismatches the rubric prompt.** **FIXED (Batch 3):** `behaviourService.js` only strips the prefix when `expected` is a non-empty string and falls back to "any navigation = pass" when `expected` is absent.
 
-### 🆕 Found during live testing (not yet fixed)
+### 🆕 Found during live testing
 
-- [ ] **V-41 — 🔴 Backend & fullstack workers don't `await` the evaluator → one bad job crashes the whole gateway.** `workers/backendWorker.js` and `workers/fullstackWorker.js` do `const results = evaluateBackendProject(job.data)` (no `await`) and return `{ success, results }` with `results` still a pending Promise. The job is marked "completed" with a meaningless value, and when the promise later rejects (e.g. E2B sandbox failure) it becomes an **unhandled rejection that kills the Node process** — taking *all* evaluators down. Observed live: a backend submission crashed the server. **Fix:** `await` the evaluator inside the worker (matches react/python which already do), and add a `process.on('unhandledRejection')` guard.
-- [ ] **V-39 — 🟠 Redirect-time SSRF bypass.** `assertSafeUrl` validates the *initial* host, but an `expectedUrl` like a `tinyurl` 30x-redirects to another host that is never re-validated (observed: `tinyurl.com` → `rylenlobo.github.io`). A shortener could redirect to an internal IP. **Fix:** after `goto`, re-check `page.url()` with `assertSafeUrl`, or block cross-host redirects to non-allowlisted/private targets.
-- [ ] **V-40 — 🟡 "Renders but blank / non-functional" isn't flagged.** An unbuilt React submission (blank page) and an unstyled JS submission still get auto-scored. **Fix:** if served page has ~0 visible text / a 404 on its main module / failed core interaction, set `manualCorrection` instead of scoring (like missing-files).
+- [x] **V-41 — 🔴 Backend & fullstack workers don't `await` the evaluator → one bad job crashes the whole gateway.** **FIXED:** added `await` in `backendWorker.js`/`fullstackWorker.js` (now matches react/python), plus a process-level `unhandledRejection` guard (contain + log, don't crash) and `uncaughtException` → graceful shutdown in `server.js`. Verified live: a failing backend job now leaves the gateway responding (health 200).
+- [x] **V-39 — 🟠 Redirect-time SSRF bypass.** **FIXED:** `renderExpectedScreenshot` re-runs `assertSafeUrl(page.url())` after the reference `goto` when the final URL differs from the requested one, so a shortener/redirect to a private target is caught.
+- [x] **V-40 — 🟡 "Renders but blank / non-functional" isn't flagged.** **FIXED:** after the student screenshot, the evaluator checks HTTP status + visible text; a blank (`<3` chars) or `>=400` page is flagged `manualCorrection: true` (with `blankPage`) and the costly vision call is skipped. (Full end-to-end path needs a live OpenAI key; blank-input condition was confirmed live — the unbuilt React page rendered 0 chars.)
+- [x] **V-42 — 🟠 API clients constructed at import time crash the server on boot when a key is unset.** **FIXED:** made OpenAI/Groq clients lazy (`getOpenAI()`/`getClient()`/`getGroq()`) in `rubricService`, visual `evaluatorService`, backend & fullstack `feedbackService`, and js `aiFeedbackService`. Verified live: the server now boots with **no** OPENAI/GROQ keys (health 200, all workers up); a missing key only errors the specific evaluator that needs it.
 
 ---
 

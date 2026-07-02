@@ -19,7 +19,7 @@ export async function initializeBackendWorker() {
       async (job) => {
         try {
           logger.info(`Starting Backend evaluation: ${job.id}`);
-          const results = evaluateBackendProject(job.data);          
+          const results = await evaluateBackendProject(job.data); // V-41: must await
           logger.info(`Backend Job ${job.id} completed`);
           return { success: true, results };
         } catch (err) {

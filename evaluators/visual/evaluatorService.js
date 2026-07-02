@@ -28,9 +28,12 @@ import { startStaticServer } from "./localServerService.js";
 import { assertSafeUrl } from "./utils/urlGuard.js";
 import logger from "../../config/logger.js";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// V-42: lazy init so a missing OPENAI_API_KEY doesn't crash the server at boot.
+let _openai;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
+}
 
 // Consistent capture geometry for student vs reference (V-23/V-26).
 const VIEWPORT = { width: 1366, height: 900 };
@@ -54,6 +57,10 @@ async function renderExpectedScreenshot(context, expectedUrl) {
   const page = await context.newPage();
   try {
     await page.goto(expectedUrl, { waitUntil: "networkidle", timeout: 30000 }); // V-24
+    // V-39: a shortener/redirect may land on a different host that bypassed the
+    // initial guard (e.g. tinyurl -> internal IP). Re-validate the final URL.
+    const finalUrl = page.url();
+    if (finalUrl !== expectedUrl) await assertSafeUrl(finalUrl);
     await page.evaluate(() => document.fonts && document.fonts.ready).catch(() => {});
     return await page.screenshot({ fullPage: false }); // V-26
   } finally {
@@ -146,11 +153,36 @@ export async function evaluateStudentsWithVision({
       const domScore = computeDomScore(rubric, domResults);
       const behaviorScore = computeBehaviorScore(rubric, behaviorResults);
 
+      // V-40: if the page rendered blank or errored, don't waste a vision call on
+      // an empty screenshot (and don't silently score it) — flag for manual review.
+      const httpStatus = responsePage?.status() ?? 0;
+      const bodyText = (await page
+        .evaluate(() => (document.body ? document.body.innerText : ""))
+        .catch(() => "")) || "";
+      const blank = bodyText.trim().length < 3;
+      const badStatus = httpStatus >= 400;
+      if (blank || badStatus) {
+        const score = assembleScore({ rubric, domScore, behaviorScore, visualScore: 0 });
+        results.push({
+          name,
+          studentId,
+          score: score.total,
+          ...score,
+          manualReviewItems: manualReviewItems(rubric),
+          feedback: badStatus
+            ? `The page returned HTTP ${httpStatus} — it may not be a built/hosted site. Needs manual review.`
+            : `The page rendered blank (no visible content). If this is an unbuilt React/Vue app, evaluate the built/hosted site instead. Needs manual review.`,
+          manualCorrection: true,
+          blankPage: true
+        });
+        return results; // finally blocks still run cleanup
+      }
+
       const studentImage = await fs.readFile(screenshotPath);
       const prompt = buildVisionPrompt(rubric, domResults, behaviorResults);
 
       // Deterministic vision call returning strict JSON (V-10/V-18).
-      const aiRes = await openai.chat.completions.create({
+      const aiRes = await getOpenAI().chat.completions.create({
         model: "gpt-4o",
         temperature: 0,
         response_format: { type: "json_object" },
