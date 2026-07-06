@@ -1,10 +1,11 @@
 import Groq from "groq-sdk";
 
-const groq =
-  new Groq({
-    apiKey:
-      process.env.GROQ_API_KEY
-  });
+// V-42: lazy init so a missing GROQ_API_KEY doesn't crash the server at boot.
+let _groq;
+function getGroq() {
+  if (!_groq) _groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return _groq;
+}
 
 export async function generateAIFeedback({
   score,
@@ -34,7 +35,7 @@ Maximum 120 words.
 `;
 
     const completion =
-      await groq.chat.completions.create({
+      await getGroq().chat.completions.create({
         model:
           "llama-3.3-70b-versatile",
         messages: [

@@ -9,15 +9,21 @@
  * - Integration with new queueManager
  */
 
-import { Worker } from 'bullmq';
+import { Worker, UnrecoverableError } from 'bullmq';
 import redisConnection from '../config/redis.js';
 import queueManager from '../config/queueManager.js';
 import logger from '../config/logger.js';
 import { getBrowserPool } from '../evaluators/visual/browserPool.js';
 import { evaluateStudentsWithVision } from '../evaluators/visual/evaluatorService.js';
-import { cloneGitRepo, deleteRepo } from '../evaluators/visual/repoService.js';
+import { cloneGitRepo, deleteRepo, sweepStaleRepos } from '../evaluators/visual/repoService.js';
+import { RubricParseError } from '../evaluators/visual/rubricSchema.js';
+import { withTimeout } from '../evaluators/react/utils/timeout.js';
 
 let visualWorker = null;
+
+// Free-tier RAM budget: each Chromium instance is ~300-500MB, so default to a
+// pool of 1 unless BROWSER_POOL_SIZE is set (e.g. on a bigger instance).
+const BROWSER_POOL_SIZE = parseInt(process.env.BROWSER_POOL_SIZE) || 1;
 
 /**
  * Initialize visual worker
@@ -27,8 +33,11 @@ export async function initializeVisualWorker() {
   try {
     logger.info('Initializing Visual Worker...');
 
+    // Clean up clone dirs orphaned by a previous crash (V-25)
+    await sweepStaleRepos();
+
     // Initialize browser pool first
-    await getBrowserPool(3);  // Pool of 3 browsers
+    await getBrowserPool(BROWSER_POOL_SIZE);
 
     // Get queue from queueManager
     const visualQueue = queueManager.getQueue('visual');
@@ -41,12 +50,14 @@ export async function initializeVisualWorker() {
         return await processVisualJob(job);
       },
       {
-        connection: redisConnection.getClient(),
+        connection: redisConnection.getClient().duplicate(), // V-13: dedicated blocking connection per worker
         concurrency: config.concurrency,  // 2 concurrent jobs
         settings: {
           maxStalledCount: 2,             // Allow 2 stalls before failing
-          lockDuration: 30000,            // Lock duration: 30 sec
-          lockRenewTime: 15000,           // Renew every 15 sec
+          // V-19: visual jobs are long (2x goto + 2x GPT-4o). Lock must comfortably
+          // exceed worst-case work; renew at half the lock.
+          lockDuration: 180000,           // 3 min
+          lockRenewTime: 60000,           // renew every 1 min
           retryProcessDelay: 5000         // Delay between retries
         }
       }
@@ -76,10 +87,13 @@ async function processVisualJob(job) {
 
   let browserPool = null;
 
+  const config = queueManager.getConfig('visual');
+
   const {
     submission,
     rubricText,
-    expectedUrl
+    expectedUrl,
+    assignmentId
     } = job.data;
   try {
     logger.info(`Starting visual evaluation job: ${jobId}`);
@@ -88,7 +102,7 @@ async function processVisualJob(job) {
     );
     
     // Get browser pool
-    browserPool = await getBrowserPool(3);
+    browserPool = await getBrowserPool(BROWSER_POOL_SIZE);
     logger.debug(`Browser pool stats:`, browserPool.getStats());
     
     // Main evaluation logic
@@ -105,20 +119,25 @@ async function processVisualJob(job) {
           rubricLength: rubricText?.length
         });
 const result =
-  await evaluateStudentsWithVision({
-    studentId:
-      submission.studentId,
+  await withTimeout(
+    evaluateStudentsWithVision({
+      jobId,
+      assignmentId,
+      studentId:
+        submission.studentId,
 
-    studentName:
-      submission.studentName,
+      studentName:
+        submission.studentName,
 
-    // repoUrl:
-    //   submission.repoUrl,
-    repoPath,
+      repoPath,
 
-    rubricText,
-    expectedUrl
-  });
+      rubricText,
+      expectedUrl,
+      entryFile: submission.entryFile
+    }),
+    config.timeout, // V-08: real, enforced job timeout
+    `visual-eval ${jobId}`
+  );
 
     logger.info(`Job completed: ${jobId}`, {
       totalStudents: result?.length || 0,
@@ -142,7 +161,17 @@ const result =
       stack: err.stack
     });
 
-    throw err;  // BullMQ will handle retry
+    // V-17: classify failures. Permanent ones (bad rubric, missing inputs) must
+    // NOT be retried 3x — that just burns GPT-4o spend on a deterministic fail.
+    const permanent =
+      err instanceof RubricParseError ||
+      err.message === 'Missing required inputs';
+
+    if (permanent) {
+      throw new UnrecoverableError(err.message);
+    }
+
+    throw err;  // transient (network / browser) → BullMQ retries
 
   }finally {
   if (repoPath) {
@@ -219,7 +248,7 @@ export async function stopVisualWorker() {
     }
 
     // Close browser pool
-    const browserPool = await getBrowserPool(3).catch(() => null);
+    const browserPool = await getBrowserPool(BROWSER_POOL_SIZE).catch(() => null);
     if (browserPool) {
       await browserPool.close();
     }

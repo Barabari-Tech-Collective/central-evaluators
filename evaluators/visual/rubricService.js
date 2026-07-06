@@ -1,44 +1,24 @@
-import OpenAI from "openai"
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+import OpenAI from "openai";
+import { RubricParseError, normalizeRubric } from "./rubricSchema.js";
+
+export { RubricParseError, normalizeRubric };
+
+// V-42: lazy init — constructing the client at import time crashes the whole
+// server on boot when OPENAI_API_KEY is unset (even for unrelated evaluators).
+let _openai;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
+}
+
 export async function parseRubricWithSelectors(text) {
-
-//   const prompt = `
-// Convert the following rubric into STRICT JSON.
-
-// Rules:
-// - Each item MUST have:
-//   - description
-//   - weight (number)
-//   - type ("visual" | "dom" | "behavior")
-
-// - For "dom":
-//   - include checks: [{ selector, condition: "exists" }]
-
-// - For "behavior":
-//   - include checks: [{ action: "click", selector, expected }]
-
-// - For "visual":
-//   - no checks
-
-// Return ONLY JSON.
-
-// Rubric:
-// ${text}
-// `;
-
-const prompt = `
+  const prompt = `
 Convert the rubric into STRICT JSON.
 
 VERY IMPORTANT CLASSIFICATION RULES:
 
-- "dom" → anything related to:
-  HTML structure, tags, inputs, favicon, elements existing
-
-- "behavior" → anything related to:
-  click, navigation, hover, interaction
-
+- "dom" → HTML structure, tags, inputs, favicon, elements existing
+- "behavior" → click, navigation, hover, interaction
 - "visual" → layout, design, styling, appearance
 
 - Each item must have:
@@ -58,48 +38,34 @@ VERY IMPORTANT CLASSIFICATION RULES:
 EXAMPLES:
 
 Favicon →
-{
-  "type": "dom",
-  "checks": [{ "selector": "link[rel='icon']", "condition": "exists" }]
-}
-
-Form →
-{
-  "type": "dom",
-  "checks": [
-    { "selector": "form input", "condition": "exists" },
-    { "selector": "select", "condition": "exists" },
-    { "selector": "textarea", "condition": "exists" }
-  ]
-}
+{ "type": "dom", "description": "Has a favicon", "weight": 5,
+  "checks": [{ "selector": "link[rel='icon']", "condition": "exists" }] }
 
 Twitter click →
-{
-  "type": "behavior",
-  "checks": [
-    { "action": "click", "selector": "a[href*='twitter']", "expected": "twitter.com" }
-  ]
-}
+{ "type": "behavior", "description": "Twitter link opens twitter.com", "weight": 5,
+  "checks": [{ "action": "click", "selector": "a[href*='twitter']", "expected": "twitter.com" }] }
 
-ONLY return JSON.
+Return a JSON object of the form: { "items": [ ...rubric items... ] }
 
 Rubric:
 ${text}
 `;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.2
+  const response = await getOpenAI().chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [{ role: "user", content: prompt }]
   });
 
-  const raw = response.choices[0].message.content.trim();
+  const raw = response.choices?.[0]?.message?.content ?? "";
 
+  let parsed;
   try {
-    return JSON.parse(raw.replace(/```json|```/g, '').trim());
+    parsed = JSON.parse(raw);
   } catch (err) {
-    console.error("Rubric parse failed", err);
-    return [];
+    throw new RubricParseError(`Rubric JSON parse failed: ${err.message}`);
   }
-}
 
+  return normalizeRubric(parsed);
+}

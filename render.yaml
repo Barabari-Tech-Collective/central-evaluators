@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: central-evaluators-visual
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BROWSER_POOL_SIZE
+        value: "1"
+      - key: VISUAL_CONCURRENCY
+        value: "1"
+      - key: API_KEY
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_USERNAME
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ALLOWED_GIT_HOSTS
+        value: github.com,gitlab.com,bitbucket.org

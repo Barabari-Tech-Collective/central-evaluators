@@ -4,10 +4,17 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const client = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY,
-  // baseURL: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
-});
+// V-42: lazy init so a missing GROQ_API_KEY doesn't crash the server at boot.
+let _client;
+function getClient() {
+  if (!_client) {
+    _client = new OpenAI({
+      apiKey: process.env.GROQ_API_KEY,
+      // baseURL: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
+    });
+  }
+  return _client;
+}
 
 export async function generateFullstackFeedback(backendResults, frontendResults, rubric) {
   if (!process.env.GROQ_API_KEY) {
@@ -55,7 +62,7 @@ Your response:
 `;
 
   try {
-    const completion = await client.chat.completions.create({
+    const completion = await getClient().chat.completions.create({
       messages: [{ role: "user", content: prompt }],
       model: "llama-3.1-8b-instant",
       max_tokens: 400,

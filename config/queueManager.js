@@ -40,7 +40,9 @@ const QUEUE_CONFIG = {
   
   visual: {
     jobName: 'visual-job',
-    concurrency: 2,       // Visual is heavy - browsers consume memory
+    // Visual is heavy - browsers consume memory. Free-tier deploys run with
+    // BROWSER_POOL_SIZE=1, so keep concurrency modest by default.
+    concurrency: parseInt(process.env.VISUAL_CONCURRENCY) || 2,
     timeout: 300000,      // 5 minutes (screenshot + browser + AI)
     description: 'Visual/UI Evaluation'
   },
@@ -107,10 +109,11 @@ class QueueManager {
               type: 'exponential',
               delay: 2000  // Start with 2 sec, exponential increase
             },
-            
-            // Job timeout (ms)
-            timeout: config.timeout,
-            
+
+            // NOTE (V-08): BullMQ v5 removed the per-job `timeout` option — it was
+            // a no-op. Real timeouts are now enforced inside the worker via
+            // withTimeout(config.timeout).
+
             // Remove completed jobs after 1 hour
             removeOnComplete: {
               age: 3600
@@ -204,10 +207,10 @@ class QueueManager {
     try {
       const queue = this.queues[type];
       const job = await queue.getJob(jobId);
-      console.log("JOB FOUND:", job);
       if (!job) {
         return null;
       }
+      logger.debug(`Job found: ${type}/${jobId}`); // V-33: no full-job/secret dump
 
       return {
         id: job.id,

@@ -1,297 +1,253 @@
-// import { cloneGitRepo } from "./repoService.js";
+// Visual evaluator orchestrator.
+//
+// Batch 2 (this commit): resource lifecycle is now leak-proof.
+//   - V-05/V-06: every browser/context/server is released in a single `finally`,
+//     even when the reference screenshot or navigation throws.
+//   - V-16/V-25: all artifacts (screenshots) live in a per-job temp dir that is
+//     deleted in `finally`; nothing is written into the source tree anymore
+//     (the old `final_scores.json` write is gone — results are returned instead).
+//
+// Scoring / rubric / vision correctness is addressed in Batch 3.
 import { parseRubricWithSelectors } from "./rubricService.js";
 import { scanStudentFolders } from "./scannerService.js";
 import { runDynamicDomChecks } from "./domService.js";
 import runBehaviorChecks from "./behaviourService.js";
-import  buildVisionPrompt  from "./utils/promptBuilder.js";
+import buildVisionPrompt from "./utils/promptBuilder.js";
+import {
+  computeDomScore,
+  computeBehaviorScore,
+  manualReviewItems,
+  assembleScore
+} from "./scoring.js";
 import fs from "fs/promises";
-import { fileURLToPath } from "url";
-import { chromium } from "playwright";
+import os from "os";
 import path from "path";
 import OpenAI from "openai";
 import { getBrowserPool } from "./browserPool.js";
-import {
-  startStaticServer
-} from "./localServerService.js";
+import { startStaticServer } from "./localServerService.js";
+import { assertSafeUrl } from "./utils/urlGuard.js";
+import logger from "../../config/logger.js";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+// V-42: lazy init so a missing OPENAI_API_KEY doesn't crash the server at boot.
+let _openai;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
+}
 
+// Consistent capture geometry for student vs reference (V-23/V-26).
+const VIEWPORT = { width: 1366, height: 900 };
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Reference-screenshot cache (V-29): the reference design is identical across all
+// submissions of an assignment, so render it once per (assignmentId, expectedUrl)
+// and reuse the PNG buffer. Stores in-flight promises to dedupe concurrent jobs.
+const EXPECTED_CACHE = new Map(); // key -> Promise<Buffer>
+const EXPECTED_CACHE_MAX = 20;
 
-const SCREENSHOT_DIR = path.join(
-  __dirname,
-  "screenshots"
-);
+function setExpectedCache(key, val) {
+  if (EXPECTED_CACHE.size >= EXPECTED_CACHE_MAX) {
+    EXPECTED_CACHE.delete(EXPECTED_CACHE.keys().next().value); // evict oldest
+  }
+  EXPECTED_CACHE.set(key, val);
+}
 
-const EXPECTED_PATH = path.join(
-  SCREENSHOT_DIR,
-  "expected.png"
-);
+async function renderExpectedScreenshot(context, expectedUrl) {
+  // V-03: re-validate right before navigating (defense in depth vs DNS rebinding).
+  await assertSafeUrl(expectedUrl);
+  const page = await context.newPage();
+  try {
+    await page.goto(expectedUrl, { waitUntil: "networkidle", timeout: 30000 }); // V-24
+    // V-39: a shortener/redirect may land on a different host that bypassed the
+    // initial guard (e.g. tinyurl -> internal IP). Re-validate the final URL.
+    const finalUrl = page.url();
+    if (finalUrl !== expectedUrl) await assertSafeUrl(finalUrl);
+    await page.evaluate(() => document.fonts && document.fonts.ready).catch(() => {});
+    return await page.screenshot({ fullPage: false }); // V-26
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
 
-// const base_url = process.env.BASE_URL;
-export async function evaluateStudentsWithVision({ studentId,
+export async function evaluateStudentsWithVision({
+  jobId,
+  assignmentId,
+  studentId,
   studentName,
   repoPath,
   rubricText,
-  expectedUrl }) {
-
+  expectedUrl,
+  entryFile = null
+}) {
   if (!repoPath || !rubricText || !expectedUrl) {
     throw new Error("Missing required inputs");
   }
 
   const rubric = await parseRubricWithSelectors(rubricText);
-  console.log("this is the actual rubric", rubric);
-  console.log("FULL RUBRIC:", JSON.stringify(rubric, null, 2));
-  const student = await scanStudentFolders(repoPath);
-
-  const {
-  server,
-  url: localUrl
-} =
- await startStaticServer(
-   student.basePath
- );
-
-  await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
-
-//   const browser = await chromium.launch({
-//   headless: true,
-//   args: ['--no-sandbox', '--disable-setuid-sandbox']
-// });
-//   const context = await browser.newContext();
-const browserPool =
-  await getBrowserPool();
-
-const browser =
-  await browserPool.borrow();
-
-const context =
-  await browser.newContext();
-
-  // expected screenshot
-  const expectedPage = await context.newPage();
-  await expectedPage.goto(expectedUrl);
-  await expectedPage.screenshot({ path: EXPECTED_PATH, fullPage: true });
-  await expectedPage.close();
-
-  const expectedImg = await fs.readFile(EXPECTED_PATH);
+  const student = await scanStudentFolders(repoPath, entryFile);
 
   const results = [];
+  const name = studentName;
 
-    const name = studentName;
-    // const url = `${base_url}/student/${encodeURIComponent(name)}`;
-    const relativeHtml =
-student.html
-.replace(student.basePath, "")
-.replace(/\\/g, "/");
+  // Missing required files: bail out BEFORE spinning up a server/browser (V-06).
+  if (student.flags.length > 0) {
+    results.push({
+      name,
+      score: 0,
+      feedback: `Missing files: ${student.flags.join(", ")}`,
+      manualCorrection: true
+    });
+    return results;
+  }
 
-const url =
-`${localUrl}${relativeHtml}`;
+  // Per-job artifact dir (V-16/V-25) — unique, outside the source tree, always cleaned up.
+  const workDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), `visual-${jobId || studentId || "job"}-`)
+  );
 
-    if (student.flags.length > 0) {
+  const browserPool = await getBrowserPool();
+  let browser = null;
+  let context = null;
+  let server = null;
+
+  try {
+    const started = await startStaticServer(student.basePath);
+    server = started.server;
+    const localUrl = started.url;
+
+    browser = await browserPool.borrow();
+    context = await browser.newContext({ viewport: VIEWPORT }); // V-23
+
+    // ---- Reference (expected) screenshot, cached per assignment (V-29) ----
+    const cacheKey = `${assignmentId || ""}::${expectedUrl}`;
+    let expectedPromise = EXPECTED_CACHE.get(cacheKey);
+    if (!expectedPromise) {
+      expectedPromise = renderExpectedScreenshot(context, expectedUrl);
+      setExpectedCache(cacheKey, expectedPromise);
+    }
+    let expectedImg;
+    try {
+      expectedImg = await expectedPromise;
+    } catch (err) {
+      EXPECTED_CACHE.delete(cacheKey); // don't cache a failure
+      throw err;
+    }
+
+    const relativeHtml = student.html
+      .replace(student.basePath, "")
+      .replace(/\\/g, "/");
+    const url = `${localUrl}${relativeHtml}`;
+
+    const page = await context.newPage();
+    try {
+      const responsePage = await page.goto(url, { waitUntil: "networkidle", timeout: 30000 }); // V-24
+      await page.evaluate(() => document.fonts && document.fonts.ready).catch(() => {}); // V-24
+      logger.debug(`Opening student url: ${url} status: ${responsePage?.status()}`);
+
+      const screenshotPath = path.join(workDir, `${studentId || name}.png`);
+      await page.screenshot({ path: screenshotPath, fullPage: false }); // V-26
+
+      const domResults = await runDynamicDomChecks(page, rubric);
+      const behaviorResults = await runBehaviorChecks(page, rubric);
+
+      // Deterministic, single-counted scores (V-07/V-21).
+      const domScore = computeDomScore(rubric, domResults);
+      const behaviorScore = computeBehaviorScore(rubric, behaviorResults);
+
+      // V-40: if the page rendered blank or errored, don't waste a vision call on
+      // an empty screenshot (and don't silently score it) — flag for manual review.
+      const httpStatus = responsePage?.status() ?? 0;
+      const bodyText = (await page
+        .evaluate(() => (document.body ? document.body.innerText : ""))
+        .catch(() => "")) || "";
+      const blank = bodyText.trim().length < 3;
+      const badStatus = httpStatus >= 400;
+      if (blank || badStatus) {
+        const score = assembleScore({ rubric, domScore, behaviorScore, visualScore: 0 });
+        results.push({
+          name,
+          studentId,
+          score: score.total,
+          ...score,
+          manualReviewItems: manualReviewItems(rubric),
+          feedback: badStatus
+            ? `The page returned HTTP ${httpStatus} — it may not be a built/hosted site. Needs manual review.`
+            : `The page rendered blank (no visible content). If this is an unbuilt React/Vue app, evaluate the built/hosted site instead. Needs manual review.`,
+          manualCorrection: true,
+          blankPage: true
+        });
+        return results; // finally blocks still run cleanup
+      }
+
+      const studentImage = await fs.readFile(screenshotPath);
+      const prompt = buildVisionPrompt(rubric, domResults, behaviorResults);
+
+      // Deterministic vision call returning strict JSON (V-10/V-18).
+      const aiRes = await getOpenAI().chat.completions.create({
+        model: "gpt-4o",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/png;base64,${studentImage.toString("base64")}`
+                }
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/png;base64,${expectedImg.toString("base64")}`
+                }
+              }
+            ]
+          }
+        ]
+      });
+
+      const raw = aiRes.choices?.[0]?.message?.content ?? "{}";
+      let visualScore = 0;
+      let visionFeedback = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        visualScore = Number(parsed.visualScore) || 0;
+        visionFeedback = parsed;
+      } catch {
+        // keep raw text as feedback; visualScore stays 0
+      }
+
+      const score = assembleScore({ rubric, domScore, behaviorScore, visualScore });
+      const needsManual = manualReviewItems(rubric);
+
+      results.push({
+        name,
+        studentId,
+        score: score.total, // backwards-compatible field
+        ...score, // domScore, behaviorScore, visualScore, total, maxTotal, normalized
+        manualReviewItems: needsManual,
+        feedback: visionFeedback,
+        manualCorrection: needsManual.length > 0
+      });
+    } catch (err) {
       results.push({
         name,
         score: 0,
-        feedback: `Missing files: ${student.flags.join(', ')}`,
+        error: err.message,
         manualCorrection: true
       });
-      // await browser.close();
-      await context.close();
-      browserPool.return(browser);
-      
-      return results;
+    } finally {
+      await page.close().catch(() => {});
     }
-
-   const page = await context.newPage();
-
-try {
-  
-  console.log(
-  "Opening student url:",
-  url
-  );
-
-  const responsePage = await page.goto(url, {timeout: 30000});
-
-  console.log(
-    "Status:",
-    responsePage?.status()
-  );
-
-  // await page.goto(url, { timeout: 30000 });
-
-  const screenshotPath = path.join(
-    SCREENSHOT_DIR,
-    `${name}.png`
-  );
-
-  await page.screenshot({
-    path: screenshotPath,
-    fullPage: true
-  });
-
-  const domResults =
-    await runDynamicDomChecks(page, rubric);
-
-  const behaviorResults =
-    await runBehaviorChecks(page, rubric);
-
-  // ---- DOM SCORE ----
-  let domScore = 0;
-
-  for (const item of rubric) {
-    if (item.type !== "dom") continue;
-
-    if (!item.checks || item.checks.length === 0) {
-      domScore += item.weight;
-      continue;
-    }
-
-    let passedCount = 0;
-
-    for (const check of item.checks) {
-      const key =
-        `${item.description} :: ${check.selector}`;
-
-      if (domResults[key]) {
-        passedCount++;
-      }
-    }
-
-    domScore +=
-      (passedCount / item.checks.length) *
-      item.weight;
+  } finally {
+    // Unconditional resource release (V-05/V-06/V-25)
+    if (context) await context.close().catch(() => {});
+    if (browser) browserPool.return(browser);
+    if (server) server.close();
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 
-  // ---- BEHAVIOR SCORE ----
-  let behaviorScore = 0;
-
-  for (const item of rubric) {
-    if (item.type !== "behavior") continue;
-
-    if (!item.checks?.length) continue;
-
-    const passed = item.checks.every(check => {
-      const key =
-        `${item.description} :: ${check.selector}`;
-
-      return behaviorResults[key];
-    });
-
-    if (passed) {
-      behaviorScore += item.weight;
-    }
-  }
-
-  const studentImage =
-    await fs.readFile(screenshotPath);
-
-  const prompt =
-    buildVisionPrompt(
-      rubric,
-      domResults,
-      behaviorResults
-    );
-
-  const aiRes =
-    await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: prompt
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url:
-                  `data:image/png;base64,${studentImage.toString("base64")}`
-              }
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url:
-                  `data:image/png;base64,${expectedImg.toString("base64")}`
-              }
-            }
-          ]
-        }
-      ]
-    });
-
-  const response =
-    aiRes.choices[0].message.content ?? "";
-
-  let visualScore = 0;
-
-  // const aiScoreMatch =
-  //   response.match(/(\d+(\.\d+)?)/);
-
-  // if (aiScoreMatch) {
-  //   visualScore =
-  //     parseFloat(aiScoreMatch[1]);
-  // }
-  const totalMatch =
-  response.match(
-    /total\s*score[:\s]+(\d+(\.\d+)?)/i
-  );
-
-if (totalMatch) {
-  visualScore =
-    Number(totalMatch[1]);
-}
-
-  const finalScore =
-    domScore +
-    behaviorScore +
-    visualScore;
-
-  results.push({
-    name,
-    score: finalScore,
-    feedback: response,
-    manualCorrection: false
-  });
-
-} catch (err) {
-
-  results.push({
-    name,
-    score: 0,
-    error: err.message,
-    manualCorrection: true
-  });
-
-} finally {
-
-  await page.close()
-  .catch(() => {});
-  if (server) {
-    server.close();
-  }
-}
-
-// browser cleanup
-// await browser.close();
-await context.close();
-browserPool.return(browser);
-
-await fs.writeFile(
-  path.join(
-    __dirname,
-    "final_scores.json"
-  ),
-  JSON.stringify(results, null, 2)
-);
-
-return results;
-
+  return results;
 }

@@ -19,7 +19,7 @@ export async function initializeBackendWorker() {
       async (job) => {
         try {
           logger.info(`Starting Backend evaluation: ${job.id}`);
-          const results = evaluateBackendProject(job.data);          
+          const results = await evaluateBackendProject(job.data); // V-41: must await
           logger.info(`Backend Job ${job.id} completed`);
           return { success: true, results };
         } catch (err) {
@@ -28,7 +28,7 @@ export async function initializeBackendWorker() {
         }
       },
       {
-        connection: redisConnection.getClient(),
+        connection: redisConnection.getClient().duplicate(), // V-13: dedicated blocking connection per worker
         concurrency: config.concurrency,
         settings: {
           maxStalledCount: 2,

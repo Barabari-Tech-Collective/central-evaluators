@@ -19,9 +19,7 @@ export async function initializeFullstackWorker() {
       async (job) => {
         try {
           logger.info(`Starting Fullstack evaluation: ${job.id}`);
-          const results = evaluateFullstackProject(job.data);
-
-          // const results = await evaluateJavaScript(job.data);
+          const results = await evaluateFullstackProject(job.data); // V-41: must await
           logger.info(`Fullstack Job ${job.id} completed`);
           return { success: true, results };
         } catch (err) {
@@ -30,7 +28,7 @@ export async function initializeFullstackWorker() {
         }
       },
       {
-        connection: redisConnection.getClient(),
+        connection: redisConnection.getClient().duplicate(), // V-13: dedicated blocking connection per worker
         concurrency: config.concurrency,
         settings: {
           maxStalledCount: 2,
