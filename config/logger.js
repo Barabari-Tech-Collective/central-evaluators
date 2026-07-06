@@ -14,9 +14,19 @@ if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
+// ioredis attaches the failed command (e.g. AUTH with the password as an arg)
+// to ReplyError instances as `.command`. winston's errors() format spreads an
+// error's own enumerable props into the log line, so that command — password
+// included — was landing in plaintext in every transport, including console.
+const redactRedisCommand = winston.format((info) => {
+  if (info.command) info.command = '[redacted]';
+  return info;
+});
+
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
+  redactRedisCommand(),
   winston.format.json()
 );
 
