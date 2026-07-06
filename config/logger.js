@@ -47,22 +47,24 @@ const logger = winston.createLogger({
   ]
 });
 
-// Add console output in development
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.printf(
-          ({ level, message, timestamp, ...meta }) => {
-            return `${timestamp} [${level}]: ${message} ${
-              Object.keys(meta).length ? JSON.stringify(meta) : ''
-            }`;
-          }
+// Console output is required in every environment: PaaS platforms (Render,
+// Railway, ...) only capture stdout/stderr, not files inside the container's
+// ephemeral filesystem. Gating this on NODE_ENV made every deploy log silent.
+logger.add(
+  new winston.transports.Console({
+    format: process.env.NODE_ENV === 'production'
+      ? logFormat
+      : winston.format.combine(
+          winston.format.colorize(),
+          winston.format.printf(
+            ({ level, message, timestamp, ...meta }) => {
+              return `${timestamp} [${level}]: ${message} ${
+                Object.keys(meta).length ? JSON.stringify(meta) : ''
+              }`;
+            }
+          )
         )
-      )
-    })
-  );
-}
+  })
+);
 
 export default logger;
