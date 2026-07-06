@@ -8,12 +8,10 @@ import logger from './config/logger.js';
 import redisConnection from './config/redis.js';
 
 // Initialize workers
+// NOTE: only the visual worker is started for this deploy (free-tier RAM budget +
+// the other 5 evaluators aren't in scope right now). Re-add the other
+// initialize*/stop* calls below to bring them back.
 import { initializeVisualWorker, stopVisualWorker } from './workers/visualWorker.js';
-import { initializeJsWorker, stopJsWorker } from './workers/jsWorker.js';
-import { initializePythonWorker, stopPythonWorker } from './workers/pythonWorker.js';
-import { initializeReactWorker, stopReactWorker } from './workers/reactWorker.js';
-import { initializeBackendWorker, stopBackendWorker } from './workers/backendWorker.js';
-import { initializeFullstackWorker, stopFullstackWorker } from './workers/fullstackWorker.js';
 
 import { requireApiKey, evaluateRateLimiter } from './middleware/auth.js';
 
@@ -43,16 +41,9 @@ async function startServer() {
     await queueManager.initialize();
     logger.info('✅ Queue manager initialized');
 
-    // 3. Initialize workers
-    await Promise.all([
-      initializeVisualWorker(),
-      initializeJsWorker(),
-      initializePythonWorker(),
-      initializeReactWorker(),
-      initializeBackendWorker(),
-      initializeFullstackWorker()
-    ]);
-    logger.info('✅ All workers initialized');
+    // 3. Initialize workers (visual only — see import comment above)
+    await initializeVisualWorker();
+    logger.info('✅ Visual worker initialized');
 
     // 4. API routes (V-04: rate limit + API-key auth)
     app.post('/evaluate', evaluateRateLimiter, requireApiKey, evaluate);
@@ -142,14 +133,7 @@ async function shutdown(signal) {
   hardExit.unref();
 
   try {
-    await Promise.allSettled([
-      stopVisualWorker(),
-      stopJsWorker(),
-      stopPythonWorker(),
-      stopReactWorker(),
-      stopBackendWorker(),
-      stopFullstackWorker()
-    ]);
+    await stopVisualWorker();
     await queueManager.disconnect();
     logger.info('Shutdown complete');
     process.exit(0);

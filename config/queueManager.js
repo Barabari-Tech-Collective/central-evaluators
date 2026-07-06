@@ -40,7 +40,9 @@ const QUEUE_CONFIG = {
   
   visual: {
     jobName: 'visual-job',
-    concurrency: 2,       // Visual is heavy - browsers consume memory
+    // Visual is heavy - browsers consume memory. Free-tier deploys run with
+    // BROWSER_POOL_SIZE=1, so keep concurrency modest by default.
+    concurrency: parseInt(process.env.VISUAL_CONCURRENCY) || 2,
     timeout: 300000,      // 5 minutes (screenshot + browser + AI)
     description: 'Visual/UI Evaluation'
   },
