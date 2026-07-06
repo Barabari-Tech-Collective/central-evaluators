@@ -21,6 +21,10 @@ import { withTimeout } from '../evaluators/react/utils/timeout.js';
 
 let visualWorker = null;
 
+// Free-tier RAM budget: each Chromium instance is ~300-500MB, so default to a
+// pool of 1 unless BROWSER_POOL_SIZE is set (e.g. on a bigger instance).
+const BROWSER_POOL_SIZE = parseInt(process.env.BROWSER_POOL_SIZE) || 1;
+
 /**
  * Initialize visual worker
  * Called once at application startup
@@ -33,7 +37,7 @@ export async function initializeVisualWorker() {
     await sweepStaleRepos();
 
     // Initialize browser pool first
-    await getBrowserPool(3);  // Pool of 3 browsers
+    await getBrowserPool(BROWSER_POOL_SIZE);
 
     // Get queue from queueManager
     const visualQueue = queueManager.getQueue('visual');
@@ -98,7 +102,7 @@ async function processVisualJob(job) {
     );
     
     // Get browser pool
-    browserPool = await getBrowserPool(3);
+    browserPool = await getBrowserPool(BROWSER_POOL_SIZE);
     logger.debug(`Browser pool stats:`, browserPool.getStats());
     
     // Main evaluation logic
@@ -244,7 +248,7 @@ export async function stopVisualWorker() {
     }
 
     // Close browser pool
-    const browserPool = await getBrowserPool(3).catch(() => null);
+    const browserPool = await getBrowserPool(BROWSER_POOL_SIZE).catch(() => null);
     if (browserPool) {
       await browserPool.close();
     }

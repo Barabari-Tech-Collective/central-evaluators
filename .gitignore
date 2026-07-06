@@ -16,3 +16,5 @@ evaluators/visual/final_scores.json
 
 # local test/screenshot output
 manual-test-output/
+
+DEPLOY.md

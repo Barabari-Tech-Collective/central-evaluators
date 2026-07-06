@@ -7,12 +7,9 @@ const SUBS_VISUAL = [
   { key: "repoUrl", ph: "https://github.com/user/repo.git", required: true },
   { key: "entryFile", ph: "entry .html (optional)" }
 ];
-const SUBS_JS = [
-  { key: "studentId", ph: "id (optional)" },
-  { key: "studentName", ph: "student name" },
-  { key: "repoUrl", ph: "https://github.com/user/repo.git", required: true }
-];
-
+// Only the visual evaluator is wired up on the server for this deploy — the
+// other 5 worker types aren't started (see server.js), so their forms are
+// left out here rather than shipping dead-end buttons that queue forever.
 const EVALUATORS = {
   visual: {
     emoji: "🎨", name: "Visual / UI",
@@ -22,55 +19,6 @@ const EVALUATORS = {
       { key: "expectedUrl", label: "Reference site URL", sub: "the correct / expected version", type: "url", required: true, ph: "https://reference.example.com" },
       { key: "rubricText", label: "Grading rubric", sub: "plain text — the AI turns it into checks", type: "textarea", required: true, ph: "1. Has a favicon\n2. Twitter link opens twitter.com\n3. Clean centered card layout" },
       { key: "submissions", type: "submissions", subFields: SUBS_VISUAL }
-    ]
-  },
-  javascript: {
-    emoji: "🟨", name: "JavaScript",
-    desc: "Run JS functions or scripts against test cases",
-    blurb: "Function mode calls a function with inputs and checks the return value. Script mode runs the file and compares console output.",
-    fields: [
-      { key: "evaluationMode", label: "Evaluation mode", type: "select", required: true,
-        options: [{ v: "function", t: "Function — call a function with inputs" }, { v: "script", t: "Script — run file, compare console output" }] },
-      { key: "entryFunction", label: "Entry function name", sub: "function mode", type: "text", ph: "sum", showIf: d => d.evaluationMode !== "script" },
-      { key: "functions", label: "Function names", sub: "optional, comma-separated", type: "text", ph: "add, subtract" },
-      { key: "testCases", label: "Test cases (JSON)", type: "textarea", required: true, ph: '[{ "input": [2, 3], "expected": 5 }]' },
-      { key: "expectedLogs", label: "Expected console output (JSON)", sub: "script mode", type: "textarea", ph: '["hello", "world"]', showIf: d => d.evaluationMode === "script" },
-      { key: "submissions", type: "submissions", subFields: SUBS_JS }
-    ]
-  },
-  python: {
-    emoji: "🐍", name: "Python",
-    desc: "Run Python files and compare output",
-    blurb: "Point at one repository that contains the student Python files.",
-    fields: [
-      { key: "repoUrl", label: "Repository URL", sub: "repo containing the Python files", type: "url", required: true, ph: "https://github.com/user/repo.git" }
-    ]
-  },
-  backend: {
-    emoji: "🛠️", name: "Backend API",
-    desc: "Clone a backend repo, run tests, score vs rubric",
-    blurb: "Auto-detects JS or Python, runs Jest/Pytest in a sandbox, scores against your rubric.",
-    fields: [
-      { key: "repoUrl", label: "Repository URL", type: "url", required: true, ph: "https://github.com/user/repo.git" },
-      { key: "rubric", label: "Grading rubric", type: "textarea", required: true, ph: "Describe the criteria and points…" }
-    ]
-  },
-  react: {
-    emoji: "⚛️", name: "React",
-    desc: "Build & drive a React app (components, props, state)",
-    blurb: "Runs the dev server and uses a browser to check rendering, props, state, routing, and mocked APIs.",
-    fields: [
-      { key: "repoUrl", label: "Repository URL", type: "url", required: true, ph: "https://github.com/user/repo.git" },
-      { key: "rubric", label: "Grading rubric", type: "textarea", required: true, ph: "Describe the criteria and points…" }
-    ]
-  },
-  fullstack: {
-    emoji: "🧩", name: "Full Stack",
-    desc: "Evaluate backend + frontend together",
-    blurb: "Combines backend and frontend evaluation for a full-stack submission.",
-    fields: [
-      { key: "repoUrl", label: "Repository URL", type: "url", required: true, ph: "https://github.com/user/repo.git" },
-      { key: "rubric", label: "Grading rubric", type: "textarea", required: true, ph: "Describe the criteria and points…" }
     ]
   }
 };
