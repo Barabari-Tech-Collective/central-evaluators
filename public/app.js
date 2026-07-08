@@ -285,9 +285,11 @@ function normalizeResults(ret) {
       domScore: e.domScore,
       behaviorScore: e.behaviorScore,
       visualScore: e.visualScore,
+      codeScore: e.codeScore,
       pendingManualPoints: e.pendingManualPoints,
       domBreakdown: e.domBreakdown,
       behaviorBreakdown: e.behaviorBreakdown,
+      codeBreakdown: e.codeBreakdown,
       visualBreakdown: e.visualBreakdown ?? (Array.isArray(fb?.breakdown) ? fb.breakdown : null),
       manualReviewDetail: e.manualReviewDetail,
       feedback: typeof fb === "object" ? (fb.feedback ?? JSON.stringify(fb, null, 2)) : fb,
@@ -357,6 +359,13 @@ function breakdownTable(it) {
 
   (it.visualBreakdown || []).forEach(row => {
     rows.push({ type: "Visual", item: row.item, awarded: row.awarded, max: row.max, detail: esc(row.reason || "") });
+  });
+
+  (it.codeBreakdown || []).forEach(row => {
+    const detail = row.checks
+      ? row.checks.map(c => `${c.passed ? "✓" : "✗"} source contains "${esc(c.pattern)}"`).join("<br>")
+      : esc(row.reason || "");
+    rows.push({ type: "Code", item: row.item, awarded: row.awarded, max: row.max, detail });
   });
 
   if (!rows.length) return "";

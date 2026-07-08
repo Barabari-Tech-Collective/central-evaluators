@@ -23,6 +23,7 @@ import {
   buildDomBreakdown,
   buildBehaviorBreakdown
 } from "./scoring.js";
+import { readSourceText, computeCodeScore } from "./codeService.js";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
@@ -103,6 +104,11 @@ export async function evaluateStudentsWithVision({
     return results;
   }
 
+  // Source-code checks ("code" rubric items) read the actual files on disk —
+  // no browser needed, so run them independently of the render pipeline below.
+  const sourceText = await readSourceText(student);
+  const { score: codeScore, breakdown: codeBreakdown } = await computeCodeScore(rubric, sourceText);
+
   // Per-job artifact dir (V-16/V-25) — unique, outside the source tree, always cleaned up.
   const workDir = await fs.mkdtemp(
     path.join(os.tmpdir(), `visual-${jobId || studentId || "job"}-`)
@@ -166,7 +172,7 @@ export async function evaluateStudentsWithVision({
       const blank = bodyText.trim().length < 3;
       const badStatus = httpStatus >= 400;
       if (blank || badStatus) {
-        const score = assembleScore({ rubric, domScore, behaviorScore, visualScore: 0 });
+        const score = assembleScore({ rubric, domScore, behaviorScore, visualScore: 0, codeScore });
         results.push({
           name,
           studentId,
@@ -176,6 +182,7 @@ export async function evaluateStudentsWithVision({
           manualReviewDetail: manualReviewDetail(rubric),
           domBreakdown: buildDomBreakdown(rubric, domResults),
           behaviorBreakdown: buildBehaviorBreakdown(rubric, behaviorResults),
+          codeBreakdown,
           feedback: badStatus
             ? `The page returned HTTP ${httpStatus} — it may not be a built/hosted site. Needs manual review.`
             : `The page rendered blank (no visible content). If this is an unbuilt React/Vue app, evaluate the built/hosted site instead. Needs manual review.`,
@@ -241,18 +248,19 @@ export async function evaluateStudentsWithVision({
         // keep raw text as feedback; visualScore stays 0
       }
 
-      const score = assembleScore({ rubric, domScore, behaviorScore, visualScore });
+      const score = assembleScore({ rubric, domScore, behaviorScore, visualScore, codeScore });
       const needsManual = manualReviewItems(rubric);
 
       results.push({
         name,
         studentId,
         score: score.total, // backwards-compatible field
-        ...score, // domScore, behaviorScore, visualScore, total, maxTotal, normalized, pendingManualPoints
+        ...score, // domScore, behaviorScore, visualScore, codeScore, total, maxTotal, normalized, pendingManualPoints
         manualReviewItems: needsManual,
         manualReviewDetail: manualReviewDetail(rubric),
         domBreakdown: buildDomBreakdown(rubric, domResults),
         behaviorBreakdown: buildBehaviorBreakdown(rubric, behaviorResults),
+        codeBreakdown,
         visualBreakdown,
         feedback: visionFeedback,
         manualCorrection: needsManual.length > 0

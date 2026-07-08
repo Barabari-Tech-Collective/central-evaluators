@@ -2,10 +2,46 @@
 // navigation — the old code only waited for a new page and so failed (and hung
 // 30s on) every in-tab link. V-38: guard a missing/empty `expected`.
 //
+// Confirmed live (2026-07-08): a click that changes something ON THE SAME
+// PAGE without navigating (a toggle button, a format switcher) always failed
+// here, because the only pass condition was "did the URL change". That's a
+// real capability gap, not a correctness bug in the student's code — added
+// `mode: "stateChange"` below to check a target element's text/attribute
+// before vs after the click instead of assuming navigation.
+//
 // Each check uses short timeouts and resets the page to its starting URL so one
 // click's navigation doesn't break the next check.
+import { widenSelector } from "./domService.js";
 
 const CHECK_TIMEOUT = 5000;
+
+async function runStateChangeCheck(page, check) {
+  const targetSelector = check.targetSelector || check.selector;
+
+  const btn = await page.$(widenSelector(check.selector));
+  if (!btn) return false;
+
+  const beforeEl = await page.$(widenSelector(targetSelector));
+  const before = beforeEl ? ((await beforeEl.textContent()) || "").trim() : null;
+
+  await btn.click().catch(() => {});
+  await page.waitForTimeout(300); // let any in-page JS handler finish updating the DOM
+
+  const afterEl = await page.$(widenSelector(targetSelector));
+  const after = afterEl ? ((await afterEl.textContent()) || "").trim() : null;
+
+  if (before === null || after === null) return false;
+
+  // Confirmed live: gating pass/fail on `expectedContains` (e.g. "AM") is
+  // unreliable — which format appears after a toggle depends on the
+  // student's own default state (a page that defaults to 12-hour flips INTO
+  // 24-hour on the first click, correctly removing AM/PM, not adding it). The
+  // rubric parser can't know a student's default in advance, so a genuine
+  // state change alone is the pass signal for "this interaction does
+  // something" — `expectedContains` isn't used as a way to fail an
+  // otherwise-working toggle.
+  return before !== after;
+}
 
 export default async function runBehaviorChecks(page, rubric) {
   const results = {};
@@ -16,6 +52,15 @@ export default async function runBehaviorChecks(page, rubric) {
 
     for (const check of item.checks) {
       const key = `${item.description} :: ${check.selector}`;
+
+      if (check.mode === "stateChange") {
+        try {
+          results[key] = await runStateChangeCheck(page, check);
+        } catch {
+          results[key] = false;
+        }
+        continue;
+      }
 
       if (check.action !== "click") {
         results[key] = false;
@@ -28,7 +73,7 @@ export default async function runBehaviorChecks(page, rubric) {
           : "";
 
       try {
-        const el = await page.$(check.selector);
+        const el = await page.$(widenSelector(check.selector));
         if (!el) {
           results[key] = false;
           continue;
