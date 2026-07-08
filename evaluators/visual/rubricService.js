@@ -15,69 +15,80 @@ export async function parseRubricWithSelectors(text) {
   const prompt = `
 Convert the rubric into STRICT JSON.
 
-VERY IMPORTANT CLASSIFICATION RULES:
+VERY IMPORTANT CLASSIFICATION RULES — this tool has FIVE ways to verify a
+criterion. Pick the one that actually matches; almost everything is
+verifiable one of these ways, so "manual" should be RARE.
 
-- "dom" → HTML structure, tags, inputs, favicon, elements existing in the
-  rendered page (a one-time, static existence/attribute/text check).
-- "behavior" → a click that NAVIGATES to a new URL or opens a new tab (e.g. a
-  link/icon that goes to an external site). This tool can ONLY detect a URL
-  change after a click — it CANNOT detect an in-page change (text, a toggled
-  class, a counter, a modal) that happens without navigating anywhere.
+- "dom" → HTML structure/elements in the rendered page. Conditions:
+    "exists" | "visible" | "textContains" | "attr" (one-time static checks)
+    "updatesOverTime" → proves a value is actually LIVE by reading it twice
+      ~1 second apart and requiring it to change (e.g. "clock updates every
+      second", "counter increments").
+    "matchesNow" → proves a displayed value is factually correct by comparing
+      it to the real current date/time. "expected" MUST be the display
+      format using tokens YYYY, MM, DD, HH (24h), hh (12h), mm, ss, A
+      (AM/PM) — e.g. "DD/MM/YYYY" or "hh:mm:ss A".
+- "behavior" → a click. TWO modes:
+    (default) the click NAVIGATES to a new URL/tab (e.g. an external link).
+    mode:"stateChange" → the click changes something ON THE SAME PAGE without
+      navigating (a toggle button, a format switcher, a show/hide). Give
+      "targetSelector" (the element whose text is expected to change) — the
+      check passes if that element's text is different after the click.
 - "visual" → subjective layout/design/appearance judged from a SCREENSHOT
-  (alignment, colors, spacing, typography, responsiveness). Only use this for
-  things visibly different between two static images.
-- "manual" → anything this tool cannot mechanically verify. Use this for:
-    (a) source code quality (indentation, variable names, comments, "clean
-        code", algorithmic correctness) — a screenshot/DOM check cannot read
-        source files;
-    (b) a value that must be observed CHANGING OVER TIME (e.g. "updates every
-        second", "a live clock", "a counter that increments") — a single
-        snapshot can't confirm it's live;
-    (c) an in-page interaction that changes something WITHOUT navigating to a
-        new URL (e.g. a toggle button, a format switcher, an accordion, a
-        show/hide) — see the "behavior" note above, this tool cannot detect
-        in-page state changes, only navigation;
-    (d) verifying a displayed value is factually CORRECT (e.g. "shows the
-        current date/time accurately") rather than merely present.
-  Do NOT force these into "dom"/"behavior"/"visual" — misclassifying them
-  produces a false 0 that looks like a bug. Classifying as "manual" is the
-  correct, honest answer.
+  (alignment, colors, spacing, typography, responsiveness). Only for things
+  visibly different between two static images.
+- "code" → verified against the STUDENT'S ACTUAL SOURCE FILES (html/css/js),
+  not the rendered page. TWO kinds of checks:
+    pattern checks → deterministic: does the source contain/match this
+      pattern (e.g. "uses setInterval() correctly" → check the source calls
+      setInterval(...); "uses Date() object" → check for "new Date(").
+      checks = [{ "pattern": "setInterval(" }, { "pattern": "new Date(" }]
+      (optionally "kind": "regex" instead of a plain substring match)
+    quality check → subjective judgment (e.g. "code quality", "meaningful
+      variable names", "proper indentation") — GPT reads the actual source
+      text and judges it directly. checks = [{ "kind": "quality" }]
+  Use "code" for ANYTHING about how the JS/HTML/CSS is written or which APIs
+  it calls — that is exactly what source-code checking is for.
+- "manual" → LAST RESORT ONLY, for a criterion none of the above can cover.
+  Do not use it just because a criterion is hard — dom/behavior/code between
+  them cover structure, live values, in-page interaction, and source
+  correctness/quality. Misclassifying something as "manual" that could have
+  been "code" or "dom" produces an avoidable 0 that looks like a bug.
 
 - Each item must have:
   description (string)
   weight (number)
-  type ("dom" | "behavior" | "visual" | "manual")
-
-- DOM:
-  checks = [{ "selector": "...", "condition": "exists" }]
-
-- BEHAVIOR:
-  checks = [{ "action": "click", "selector": "...", "expected": "twitter.com" }]
-
-- VISUAL:
-  checks = []
-
-- MANUAL:
-  checks = []
+  type ("dom" | "behavior" | "visual" | "code" | "manual")
 
 EXAMPLES:
 
-Favicon →
+Favicon (static structure) →
 { "type": "dom", "description": "Has a favicon", "weight": 5,
   "checks": [{ "selector": "link[rel='icon']", "condition": "exists" }] }
+
+Live clock (must be observed changing) →
+{ "type": "dom", "description": "Time updates every second", "weight": 10,
+  "checks": [{ "selector": "#time", "condition": "updatesOverTime" }] }
+
+Date is factually correct (not just present) →
+{ "type": "dom", "description": "Displays current date in DD/MM/YYYY format", "weight": 10,
+  "checks": [{ "selector": "#date", "condition": "matchesNow", "expected": "DD/MM/YYYY" }] }
 
 Twitter click (navigates to an external URL) →
 { "type": "behavior", "description": "Twitter link opens twitter.com", "weight": 5,
   "checks": [{ "action": "click", "selector": "a[href*='twitter']", "expected": "twitter.com" }] }
 
-Code quality (needs source review) →
-{ "type": "manual", "description": "Proper indentation, meaningful variable names, readable code", "weight": 5, "checks": [] }
+In-page toggle (no navigation — same-page state change) →
+{ "type": "behavior", "description": "12/24-hour toggle switches format correctly", "weight": 15,
+  "checks": [{ "action": "click", "selector": "#toggleBtn", "mode": "stateChange", "targetSelector": "#time" }] }
 
-Live-updating value (needs observation over time) →
-{ "type": "manual", "description": "Time updates every second using setInterval", "weight": 10, "checks": [] }
+Uses required JS APIs (objective — check the actual source) →
+{ "type": "code", "description": "Uses Date() object and setInterval() correctly", "weight": 15,
+  "checks": [{ "pattern": "new Date(" }, { "pattern": "setInterval(" }] }
 
-In-page toggle (no navigation happens) →
-{ "type": "manual", "description": "12/24-hour toggle button switches format correctly", "weight": 15, "checks": [] }
+Code quality (subjective — GPT reads the actual source) →
+{ "type": "code", "description": "Proper indentation, meaningful variable names, readable code", "weight": 5,
+  "checks": [{ "kind": "quality" }] }
 
 Return a JSON object of the form: { "items": [ ...rubric items... ] }
 

@@ -37,6 +37,7 @@ export async function scanStudentFolders(rootDir, entryFile = null) {
 
   const htmlFiles = await globby(['**/*.html'], { cwd: rootDir, absolute: true });
   const cssFiles = await globby(['**/*.css'], { cwd: rootDir, absolute: true });
+  const jsFiles = await globby(['**/*.js'], { cwd: rootDir, absolute: true });
 
   const flags = [];
   if (htmlFiles.length === 0) flags.push('Missing HTML');
@@ -45,6 +46,7 @@ export async function scanStudentFolders(rootDir, entryFile = null) {
   return {
     html: pickEntryHtml(htmlFiles, rootDir, entryFile),
     css: cssFiles,
+    js: jsFiles,
     flags,
     basePath: rootDir
   };

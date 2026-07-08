@@ -44,8 +44,18 @@ const cases = [
     expect: "throw",
   },
   {
-    name: "manual type (unscorable criteria, e.g. code quality) → accepted",
-    input: { items: [{ description: "Code quality", type: "manual", weight: 5, checks: [] }] },
+    name: "manual type (rare last-resort fallback) → accepted",
+    input: { items: [{ description: "Something truly unverifiable", type: "manual", weight: 5, checks: [] }] },
+    expect: "array",
+  },
+  {
+    name: "code type with pattern checks (e.g. uses setInterval()) → accepted",
+    input: { items: [{ description: "Uses setInterval()", type: "code", weight: 10, checks: [{ pattern: "setInterval(" }] }] },
+    expect: "array",
+  },
+  {
+    name: "code type with a quality check → accepted",
+    input: { items: [{ description: "Code quality", type: "code", weight: 5, checks: [{ kind: "quality" }] }] },
     expect: "array",
   },
   {

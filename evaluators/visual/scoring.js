@@ -122,6 +122,8 @@ export function buildBehaviorBreakdown(rubric, behaviorResults) {
       const checks = item.checks.map(check => ({
         selector: check.selector,
         action: check.action,
+        mode: check.mode || "navigate",
+        targetSelector: check.targetSelector,
         passed: !!behaviorResults[`${item.description} :: ${check.selector}`]
       }));
       const max = Number(item.weight) || 0;
@@ -136,18 +138,19 @@ export function buildBehaviorBreakdown(rubric, behaviorResults) {
 }
 
 /**
- * Single source of truth for the final score (V-07): DOM + behavior + the
- * model's VISUAL-items subtotal — each counted exactly once. Also returns the
- * normalized 0–100 view (V-30) so scores are comparable across rubrics.
+ * Single source of truth for the final score (V-07): DOM + behavior + code +
+ * the model's VISUAL-items subtotal — each counted exactly once. Also returns
+ * the normalized 0–100 view (V-30) so scores are comparable across rubrics.
  */
-export function assembleScore({ rubric, domScore, behaviorScore, visualScore }) {
-  const total = domScore + behaviorScore + visualScore;
+export function assembleScore({ rubric, domScore, behaviorScore, visualScore, codeScore = 0 }) {
+  const total = domScore + behaviorScore + visualScore + codeScore;
   const maxTotal = computeMaxScore(rubric);
   const normalized = maxTotal > 0 ? (total / maxTotal) * 100 : 0;
   return {
     domScore,
     behaviorScore,
     visualScore,
+    codeScore,
     total,
     maxTotal,
     normalized: Math.round(normalized * 100) / 100,
