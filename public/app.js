@@ -221,37 +221,94 @@ $("#evaluateBtn").addEventListener("click", async () => {
     return;
   }
 
-  // Normalize to a list of jobs, labelled by student where possible
+  // Normalize to a list of jobs, labelled by student where possible.
+  // cardKey is a STABLE id independent of jobId, since re-evaluating gets a
+  // new jobId but must keep updating the same card/chip/body elements.
   const jobs = Array.isArray(body.jobs) ? body.jobs : [{ jobId: body.jobId }];
   const subs = payload.submissions || [];
   const cards = jobs.map((j, i) => ({
+    cardKey: subs[i]?.studentId || subs[i]?.repoUrl || `job-${i}`,
     jobId: j.jobId,
-    label: subs[i]?.studentName || subs[i]?.repoUrl || payload.repoUrl || `Job ${j.jobId}`
+    label: subs[i]?.studentName || subs[i]?.repoUrl || payload.repoUrl || `Job ${j.jobId}`,
+    // Exact payload to resend on re-evaluate: the whole original request,
+    // narrowed to just this one submission when the request fanned out.
+    resubmitPayload: subs.length ? { ...payload, submissions: [subs[i]] } : payload
   }));
 
   results.innerHTML = cards.map(c => cardShell(c)).join("");
-  cards.forEach(pollJob);
+  cards.forEach(c => {
+    $(`#reeval-${CSS.escape(c.cardKey)}`).addEventListener("click", () => reEvaluate(c));
+    pollJob(c);
+  });
 });
 
 function cardShell(c) {
-  return `<div class="result-card" id="card-${esc(c.jobId)}">
+  return `<div class="result-card" id="card-${esc(c.cardKey)}">
     <div class="result-head">
       <span class="result-title">${esc(c.label)}</span>
-      <span class="chip waiting" id="chip-${esc(c.jobId)}">⏳ In queue</span>
+      <span class="result-actions">
+        <span class="chip waiting" id="chip-${esc(c.cardKey)}">⏳ In queue</span>
+        <button type="button" class="ghost-btn small" id="reeval-${esc(c.cardKey)}" title="Re-run this submission">🔁 Re-evaluate</button>
+      </span>
     </div>
-    <div id="body-${esc(c.jobId)}"></div>
+    <div id="body-${esc(c.cardKey)}"></div>
   </div>`;
 }
 
+async function reEvaluate(card) {
+  const btn = $(`#reeval-${CSS.escape(card.cardKey)}`);
+  const chip = $(`#chip-${CSS.escape(card.cardKey)}`);
+  const bodyEl = $(`#body-${CSS.escape(card.cardKey)}`);
+
+  btn.disabled = true;
+  chip.className = "chip waiting";
+  chip.textContent = "⏳ Re-submitting…";
+  bodyEl.innerHTML = "";
+
+  let res, body;
+  try {
+    res = await fetch("/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": getKey() },
+      body: JSON.stringify(card.resubmitPayload)
+    });
+    body = await res.json().catch(() => ({}));
+  } catch (e) {
+    chip.className = "chip failed";
+    chip.textContent = "❌ Failed";
+    bodyEl.innerHTML = banner(`Couldn't reach the server: ${esc(e.message)}`);
+    btn.disabled = false;
+    return;
+  }
+
+  if (!res.ok || body.success === false) {
+    const msg = body.error || `Request failed (HTTP ${res.status})`;
+    const help = friendlyError(msg) || (res.status === 401 ? "Your API key is missing or wrong. Open ⚙️ Settings." : null);
+    chip.className = "chip failed";
+    chip.textContent = "❌ Failed";
+    bodyEl.innerHTML = banner(msg, help);
+    btn.disabled = false;
+    return;
+  }
+
+  const newJob = Array.isArray(body.jobs) ? body.jobs[0] : { jobId: body.jobId };
+  card.jobId = newJob.jobId;
+  chip.className = "chip waiting";
+  chip.textContent = "⏳ In queue";
+  btn.disabled = false;
+  pollJob(card);
+}
+
 async function pollJob(card) {
-  const chip = $(`#chip-${CSS.escape(card.jobId)}`);
-  const bodyEl = $(`#body-${CSS.escape(card.jobId)}`);
+  const chip = $(`#chip-${CSS.escape(card.cardKey)}`);
+  const bodyEl = $(`#body-${CSS.escape(card.cardKey)}`);
   let tries = 0;
+  const jobId = card.jobId; // capture: card.jobId may be reassigned by a later re-evaluate
   const tick = async () => {
     tries++;
     let job;
     try {
-      const r = await fetch(`/jobs/${selectedType}/${encodeURIComponent(card.jobId)}`);
+      const r = await fetch(`/jobs/${selectedType}/${encodeURIComponent(jobId)}`);
       job = await r.json();
     } catch (e) { bodyEl.innerHTML = small(`Polling error: ${esc(e.message)}`); return; }
 
