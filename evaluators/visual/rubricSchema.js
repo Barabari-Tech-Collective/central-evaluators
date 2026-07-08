@@ -13,7 +13,13 @@ export class RubricParseError extends Error {
   }
 }
 
-export const VALID_TYPES = new Set(["dom", "behavior", "visual"]);
+// "manual" (added alongside V-09's fix): a criterion the parser has determined
+// this tool structurally cannot auto-grade — needs source-code reading, a
+// value observed changing over time, or an in-page state change that doesn't
+// navigate anywhere (see rubricService.js's classification rules). It earns 0
+// automatically and is surfaced via manualReviewItems()/manualReviewDetail()
+// rather than being force-fit into dom/behavior/visual and silently failing.
+export const VALID_TYPES = new Set(["dom", "behavior", "visual", "manual"]);
 
 /**
  * Accept the shapes gpt-4o realistically returns and validate them:

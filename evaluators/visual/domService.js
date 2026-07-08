@@ -1,8 +1,23 @@
 // DOM checks. V-22: honor `check.condition` instead of only testing existence.
 // Supported conditions: "exists" (default), "visible", "textContains", "attr".
 
+// Confirmed live (2026-07-08, Digital Clock batch test): the rubric parser
+// generates a bare ID selector ("#container") for element names the rubric
+// doesn't specify id-vs-class for, but real submissions commonly implement
+// them as classes ("class='container'") — an ID selector can never match a
+// class attribute, so every student failed a check they'd actually satisfied.
+// Rather than rely on the model always guessing right, widen a bare single
+// id/class selector to match either form. Selectors that are already more
+// specific (combinators, attribute selectors, tag names) are left untouched.
+function widenSelector(selector) {
+  const bareIdOrClass = /^([.#])([\w-]+)$/.exec((selector || "").trim());
+  if (!bareIdOrClass) return selector;
+  const [, , name] = bareIdOrClass;
+  return `#${name}, .${name}`;
+}
+
 async function evaluateCheck(page, check) {
-  const el = await page.$(check.selector);
+  const el = await page.$(widenSelector(check.selector));
   if (!el) return false;
 
   const condition = (check.condition || "exists").toLowerCase();

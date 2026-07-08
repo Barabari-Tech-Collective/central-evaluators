@@ -282,7 +282,15 @@ function normalizeResults(ret) {
       total: e.total,
       maxTotal: e.maxTotal,
       normalized: e.normalized,
-      feedback: typeof fb === "object" ? JSON.stringify(fb, null, 2) : fb,
+      domScore: e.domScore,
+      behaviorScore: e.behaviorScore,
+      visualScore: e.visualScore,
+      pendingManualPoints: e.pendingManualPoints,
+      domBreakdown: e.domBreakdown,
+      behaviorBreakdown: e.behaviorBreakdown,
+      visualBreakdown: e.visualBreakdown ?? (Array.isArray(fb?.breakdown) ? fb.breakdown : null),
+      manualReviewDetail: e.manualReviewDetail,
+      feedback: typeof fb === "object" ? (fb.feedback ?? JSON.stringify(fb, null, 2)) : fb,
       error: e.error ?? e.evaluation?.error,
       manualReviewItems: e.manualReviewItems,
       raw: e
@@ -310,7 +318,14 @@ function renderResult(ret) {
       if (pct != null) html += `<div class="bar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></div>`;
     }
 
-    if (Array.isArray(it.manualReviewItems) && it.manualReviewItems.length) {
+    html += breakdownTable(it);
+
+    if (Array.isArray(it.manualReviewDetail) && it.manualReviewDetail.length) {
+      const points = it.pendingManualPoints != null ? it.pendingManualPoints : it.manualReviewDetail.reduce((s, m) => s + (m.weight || 0), 0);
+      html += `<div class="explain"><b>Needs manual review (${esc(points)} pts not auto-gradable):</b><ul style="margin:6px 0 0 18px;padding:0">` +
+        it.manualReviewDetail.map(m => `<li>${esc(m.description)} <span style="opacity:.7">(${esc(m.weight)} pts) — ${esc(m.reason)}</span></li>`).join("") +
+        `</ul></div>`;
+    } else if (Array.isArray(it.manualReviewItems) && it.manualReviewItems.length) {
       html += `<div class="explain"><b>Needs manual review:</b> ${esc(it.manualReviewItems.join(", "))}</div>`;
     }
     if (it.feedback) html += `<div class="feedback">${esc(it.feedback)}</div>`;
@@ -318,6 +333,46 @@ function renderResult(ret) {
     html += rawBlock(it.raw);
     return html;
   }).join("<hr style='border:none;border-top:1px solid var(--line);margin:14px 0'>");
+}
+
+// Per-criterion "why did I get/lose these points" table — pulls DOM/behavior
+// per-check pass-fail detail and the vision model's own per-item breakdown
+// into one place, so a score isn't just an opaque number.
+function breakdownTable(it) {
+  const rows = [];
+
+  (it.domBreakdown || []).forEach(row => {
+    const detail = (row.checks || [])
+      .map(c => `${c.passed ? "✓" : "✗"} ${esc(c.selector)} (${esc(c.condition)})`)
+      .join("<br>");
+    rows.push({ type: "DOM", item: row.item, awarded: row.awarded, max: row.max, detail });
+  });
+
+  (it.behaviorBreakdown || []).forEach(row => {
+    const detail = (row.checks || [])
+      .map(c => `${c.passed ? "✓" : "✗"} click ${esc(c.selector)}`)
+      .join("<br>");
+    rows.push({ type: "Behavior", item: row.item, awarded: row.awarded, max: row.max, detail });
+  });
+
+  (it.visualBreakdown || []).forEach(row => {
+    rows.push({ type: "Visual", item: row.item, awarded: row.awarded, max: row.max, detail: esc(row.reason || "") });
+  });
+
+  if (!rows.length) return "";
+
+  return `<table class="breakdown" style="width:100%;border-collapse:collapse;margin:10px 0;font-size:13px">
+    <thead><tr style="text-align:left;opacity:.7">
+      <th style="padding:4px 8px 4px 0">Type</th><th style="padding:4px 8px">Criterion</th>
+      <th style="padding:4px 8px">Points</th><th style="padding:4px 0">Why</th>
+    </tr></thead>
+    <tbody>${rows.map(r => `<tr style="border-top:1px solid var(--line)">
+      <td style="padding:4px 8px 4px 0;opacity:.7">${esc(r.type)}</td>
+      <td style="padding:4px 8px">${esc(r.item)}</td>
+      <td style="padding:4px 8px;white-space:nowrap">${esc(r.awarded)} / ${esc(r.max)}</td>
+      <td style="padding:4px 0">${r.detail}</td>
+    </tr>`).join("")}</tbody>
+  </table>`;
 }
 
 function renderFailure(reason) {
