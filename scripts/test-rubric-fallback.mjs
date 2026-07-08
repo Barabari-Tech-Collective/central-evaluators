@@ -44,6 +44,11 @@ const cases = [
     expect: "throw",
   },
   {
+    name: "manual type (unscorable criteria, e.g. code quality) → accepted",
+    input: { items: [{ description: "Code quality", type: "manual", weight: 5, checks: [] }] },
+    expect: "array",
+  },
+  {
     name: "non-array/non-object → typed error",
     input: "not json",
     expect: "throw",

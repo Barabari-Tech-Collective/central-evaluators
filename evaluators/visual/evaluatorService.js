@@ -17,7 +17,11 @@ import {
   computeDomScore,
   computeBehaviorScore,
   manualReviewItems,
-  assembleScore
+  manualReviewDetail,
+  assembleScore,
+  clampScore,
+  buildDomBreakdown,
+  buildBehaviorBreakdown
 } from "./scoring.js";
 import fs from "fs/promises";
 import os from "os";
@@ -169,6 +173,9 @@ export async function evaluateStudentsWithVision({
           score: score.total,
           ...score,
           manualReviewItems: manualReviewItems(rubric),
+          manualReviewDetail: manualReviewDetail(rubric),
+          domBreakdown: buildDomBreakdown(rubric, domResults),
+          behaviorBreakdown: buildBehaviorBreakdown(rubric, behaviorResults),
           feedback: badStatus
             ? `The page returned HTTP ${httpStatus} — it may not be a built/hosted site. Needs manual review.`
             : `The page rendered blank (no visible content). If this is an unbuilt React/Vue app, evaluate the built/hosted site instead. Needs manual review.`,
@@ -209,12 +216,27 @@ export async function evaluateStudentsWithVision({
       });
 
       const raw = aiRes.choices?.[0]?.message?.content ?? "{}";
+      const maxVisual = rubric
+        .filter(r => r.type === "visual")
+        .reduce((s, r) => s + (Number(r.weight) || 0), 0);
       let visualScore = 0;
       let visionFeedback = raw;
+      let visualBreakdown = [];
       try {
         const parsed = JSON.parse(raw);
-        visualScore = Number(parsed.visualScore) || 0;
+        // The model is only asked to "stay within max" — nothing enforced that
+        // server-side, and an obedience slip here is exactly what let totals
+        // exceed 100 (e.g. 115/125) even though maxTotal was correctly 100.
+        const rawVisual = Number(parsed.visualScore) || 0;
+        visualScore = clampScore(rawVisual, maxVisual);
+        if (rawVisual !== visualScore) {
+          logger.warn(
+            `Vision model returned an out-of-range visualScore (${rawVisual}, max ${maxVisual}) — clamped`,
+            { jobId, studentId }
+          );
+        }
         visionFeedback = parsed;
+        visualBreakdown = Array.isArray(parsed.breakdown) ? parsed.breakdown : [];
       } catch {
         // keep raw text as feedback; visualScore stays 0
       }
@@ -226,8 +248,12 @@ export async function evaluateStudentsWithVision({
         name,
         studentId,
         score: score.total, // backwards-compatible field
-        ...score, // domScore, behaviorScore, visualScore, total, maxTotal, normalized
+        ...score, // domScore, behaviorScore, visualScore, total, maxTotal, normalized, pendingManualPoints
         manualReviewItems: needsManual,
+        manualReviewDetail: manualReviewDetail(rubric),
+        domBreakdown: buildDomBreakdown(rubric, domResults),
+        behaviorBreakdown: buildBehaviorBreakdown(rubric, behaviorResults),
+        visualBreakdown,
         feedback: visionFeedback,
         manualCorrection: needsManual.length > 0
       });
