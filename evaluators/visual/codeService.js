@@ -40,8 +40,29 @@ export async function readSourceText(student) {
   return combined.trim();
 }
 
+// Confirmed live (2026-07-08): "files linked correctly" was being checked by
+// substring-matching the literal filename ("index.html", "styles.css") the
+// rubric parser guessed against the WHOLE concatenated source — nonsensical,
+// since index.html doesn't reference its own filename, and a student who
+// named their stylesheet "style.css" would fail regardless of whether it was
+// actually linked correctly. What "linked correctly" really means is: does
+// the HTML contain a real <link rel="stylesheet" href="*.css"> and a real
+// <script src="*.js">, independent of the exact filename chosen.
+function isFileLinked(sourceText, target) {
+  if (target === "css") {
+    const linkTags = sourceText.match(/<link\b[^>]*>/gi) || [];
+    return linkTags.some(tag => /rel\s*=\s*["']?stylesheet["']?/i.test(tag) && /href\s*=\s*["'][^"']+\.css["']/i.test(tag));
+  }
+  if (target === "js") {
+    const scriptTags = sourceText.match(/<script\b[^>]*>/gi) || [];
+    return scriptTags.some(tag => /src\s*=\s*["'][^"']+\.js["']/i.test(tag));
+  }
+  return false;
+}
+
 /** Deterministic "does the source contain/match this pattern" check. */
 function evaluatePatternCheck(sourceText, check) {
+  if (check.kind === "filesLinked") return isFileLinked(sourceText, check.target);
   if (!check.pattern) return false;
   if (check.kind === "regex") {
     try {
@@ -121,7 +142,8 @@ export async function computeCodeScore(rubric, sourceText) {
     }
 
     const results = checks.map(c => ({
-      pattern: c.pattern,
+      pattern: c.kind === "filesLinked" ? `.${c.target} file is linked via <link>/<script>` : c.pattern,
+      label: c.kind === "filesLinked" ? "checked" : "source contains",
       passed: evaluatePatternCheck(sourceText, c)
     }));
     const passedCount = results.filter(r => r.passed).length;

@@ -37,6 +37,28 @@ console.log("--- computeCodeScore: deterministic pattern checks ---");
 }
 
 console.log("");
+console.log("--- computeCodeScore: filesLinked (not a literal-filename match) ---");
+{
+  const rubric = [
+    { description: "Files linked correctly", type: "code", weight: 10, checks: [{ kind: "filesLinked", target: "css" }, { kind: "filesLinked", target: "js" }] },
+  ];
+  // Confirmed live bug: a real, correctly-linked page using a DIFFERENT
+  // filename than the rubric's example ("style.css" not "styles.css") used
+  // to score 0 under literal-substring matching. It must pass now.
+  const properlyLinkedDifferentNames = `<html><head><link rel="stylesheet" href="style.css"></head><body><script src="app.js"></script></body></html>`;
+  const notLinked = `<html><head></head><body>plain page, no link/script tags</body></html>`;
+  const inlineOnly = `<html><head><style>body{color:red}</style></head><body><script>console.log(1)</script></body></html>`;
+
+  const linked = await computeCodeScore(rubric, properlyLinkedDifferentNames);
+  const unlinked = await computeCodeScore(rubric, notLinked);
+  const inline = await computeCodeScore(rubric, inlineOnly);
+
+  check("real <link>/<script> tags with DIFFERENT filenames than any example → full credit", linked.score === 10);
+  check("no <link>/<script> tags at all → zero credit", unlinked.score === 0);
+  check("inline <style>/<script> (no external file) → does not count as linked", inline.score === 0);
+}
+
+console.log("");
 console.log("--- computeCodeScore: regex kind ---");
 {
   const rubric = [

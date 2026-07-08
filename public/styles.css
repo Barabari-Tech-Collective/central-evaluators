@@ -103,6 +103,8 @@ input:focus, textarea:focus, select:focus { outline: 2px solid #bfdbfe; border-c
 .primary-btn.big { padding: 12px 22px; font-size: 15px; }
 .ghost-btn { background: transparent; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer; color: var(--ink); }
 .ghost-btn:hover { background: #f1f5f9; }
+.ghost-btn.small { padding: 4px 10px; font-size: 12px; border-radius: 999px; }
+.ghost-btn.small:disabled { opacity: .5; cursor: default; }
 .actions { display: flex; gap: 10px; margin-top: 18px; }
 
 /* Banners */
@@ -115,6 +117,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid #bfdbfe; border-c
 .result-card { border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
 .result-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .result-title { font-weight: 700; }
+.result-actions { display: flex; align-items: center; gap: 8px; }
 .chip { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
 .chip.waiting { background: #e2e8f0; color: #475569; }
 .chip.active  { background: var(--run-bg); color: var(--run); }
