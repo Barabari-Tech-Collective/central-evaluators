@@ -420,7 +420,7 @@ function breakdownTable(it) {
 
   (it.codeBreakdown || []).forEach(row => {
     const detail = row.checks
-      ? row.checks.map(c => `${c.passed ? "✓" : "✗"} source contains "${esc(c.pattern)}"`).join("<br>")
+      ? row.checks.map(c => `${c.passed ? "✓" : "✗"} ${esc(c.label || "source contains")} "${esc(c.pattern)}"`).join("<br>")
       : esc(row.reason || "");
     rows.push({ type: "Code", item: row.item, awarded: row.awarded, max: row.max, detail });
   });

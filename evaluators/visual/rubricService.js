@@ -38,17 +38,27 @@ verifiable one of these ways, so "manual" should be RARE.
   (alignment, colors, spacing, typography, responsiveness). Only for things
   visibly different between two static images.
 - "code" → verified against the STUDENT'S ACTUAL SOURCE FILES (html/css/js),
-  not the rendered page. TWO kinds of checks:
+  not the rendered page. THREE kinds of checks:
     pattern checks → deterministic: does the source contain/match this
       pattern (e.g. "uses setInterval() correctly" → check the source calls
       setInterval(...); "uses Date() object" → check for "new Date(").
       checks = [{ "pattern": "setInterval(" }, { "pattern": "new Date(" }]
       (optionally "kind": "regex" instead of a plain substring match)
+    filesLinked check → for "files linked correctly" / "proper project
+      structure" style criteria. DO NOT pattern-match the literal filename
+      (e.g. checking the source contains "styles.css") — that's checking the
+      wrong thing: index.html doesn't reference its own filename, and a
+      student who names their file "style.css" instead of "styles.css" would
+      wrongly fail despite linking it correctly. Instead check for a REAL
+      <link rel="stylesheet" href="*.css"> / <script src="*.js"> tag,
+      independent of the exact filename: checks = [{ "kind": "filesLinked",
+      "target": "css" }, { "kind": "filesLinked", "target": "js" }]
     quality check → subjective judgment (e.g. "code quality", "meaningful
       variable names", "proper indentation") — GPT reads the actual source
       text and judges it directly. checks = [{ "kind": "quality" }]
-  Use "code" for ANYTHING about how the JS/HTML/CSS is written or which APIs
-  it calls — that is exactly what source-code checking is for.
+  Use "code" for ANYTHING about how the JS/HTML/CSS is written, which APIs it
+  calls, or whether resources are linked — that is exactly what source-code
+  checking is for.
 - "manual" → LAST RESORT ONLY, for a criterion none of the above can cover.
   Do not use it just because a criterion is hard — dom/behavior/code between
   them cover structure, live values, in-page interaction, and source
@@ -85,6 +95,10 @@ In-page toggle (no navigation — same-page state change) →
 Uses required JS APIs (objective — check the actual source) →
 { "type": "code", "description": "Uses Date() object and setInterval() correctly", "weight": 15,
   "checks": [{ "pattern": "new Date(" }, { "pattern": "setInterval(" }] }
+
+Files linked correctly (check the actual <link>/<script> tags, not filenames) →
+{ "type": "code", "description": "Proper project structure — files linked correctly", "weight": 5,
+  "checks": [{ "kind": "filesLinked", "target": "css" }, { "kind": "filesLinked", "target": "js" }] }
 
 Code quality (subjective — GPT reads the actual source) →
 { "type": "code", "description": "Proper indentation, meaningful variable names, readable code", "weight": 5,
