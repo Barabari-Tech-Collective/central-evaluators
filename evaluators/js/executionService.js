@@ -43,9 +43,20 @@ export function runJavaScript({
     };
   }
 
+      // Author: Arma Sahar
+      // Bug (jsBugs.md #3): this always spread `testCase.input`, assuming
+      // every test case's input is an args array. The repo's own fixture
+      // (config/testCases.js) uses a scalar input (e.g. `input: -1`), so
+      // `...(-1)` threw "not iterable" and every such test case silently
+      // failed. Fix: only spread when input is actually an array; otherwise
+      // pass it as the single argument the function expects.
+      const args = Array.isArray(testCase.input)
+        ? testCase.input
+        : [testCase.input];
+
       const result = vm.run(`
         ${entryFunction}(
-          ...${JSON.stringify(testCase.input)}
+          ...${JSON.stringify(args)}
         )
       `);
 

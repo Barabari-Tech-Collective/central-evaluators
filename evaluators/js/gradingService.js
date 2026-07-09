@@ -6,8 +6,13 @@ export function calculateScore({
   astAnalysis
 }) {
 
+  // Author: Arma Sahar
+  // Bug (jsBugs.md #7): (passed / total) * 70 produced NaN whenever total
+  // was 0 (e.g. an empty test case list), and NaN then propagated through
+  // Math.round() to the final score. Fix: treat "no tests to run" as no
+  // test-score contribution instead of dividing by zero.
   const testScore =
-    (passed / total) * 70;
+    total > 0 ? (passed / total) * 70 : 0;
 
   let qualityScore = 0;
 

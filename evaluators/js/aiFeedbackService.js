@@ -52,12 +52,13 @@ Maximum 120 words.
       .message.content;
 
   } catch (err) {
-      console.error(
-    "[AI FEEDBACK ERROR]",
-    err
-  );
-  console.log("error from ai service", err);
-    return
-      "AI feedback unavailable.";
+    console.error("[AI FEEDBACK ERROR]", err);
+
+    // Author: Arma Sahar
+    // Bug (jsBugs.md #4): `return` followed by a newline then the string
+    // triggered Automatic Semicolon Insertion — JS read it as `return;`,
+    // so this always returned undefined instead of the fallback message.
+    // Fix: keep the return value on the same line as `return`.
+    return "AI feedback unavailable.";
   }
 }
