@@ -7,9 +7,18 @@ const SUBS_VISUAL = [
   { key: "repoUrl", ph: "https://github.com/user/repo.git", required: true },
   { key: "entryFile", ph: "entry .html (optional)" }
 ];
-// Only the visual evaluator is wired up on the server for this deploy — the
-// other 5 worker types aren't started (see server.js), so their forms are
-// left out here rather than shipping dead-end buttons that queue forever.
+// Author: Arma Sahar — JS evaluator submissions don't need an entry file,
+// fileService.js auto-finds the student's .js file in the cloned repo.
+const SUBS_JS = [
+  { key: "studentId", ph: "id (optional)" },
+  { key: "studentName", ph: "student name" },
+  { key: "repoUrl", ph: "https://github.com/user/repo.git", required: true }
+];
+
+// Author: Arma Sahar — enabling the javascript evaluator now that
+// evaluators/js/* is fixed (see jsBugs.md). Only visual + javascript are
+// wired up on the server for this deploy; the other 4 worker types aren't
+// started (see server.js), so their forms stay out of this map.
 const EVALUATORS = {
   visual: {
     emoji: "🎨", name: "Visual / UI",
@@ -19,6 +28,41 @@ const EVALUATORS = {
       { key: "expectedUrl", label: "Reference site URL", sub: "the correct / expected version", type: "url", required: true, ph: "https://reference.example.com" },
       { key: "rubricText", label: "Grading rubric", sub: "plain text — the AI turns it into checks", type: "textarea", required: true, ph: "1. Has a favicon\n2. Twitter link opens twitter.com\n3. Clean centered card layout" },
       { key: "submissions", type: "submissions", subFields: SUBS_VISUAL }
+    ]
+  },
+  javascript: {
+    emoji: "🟨", name: "JavaScript",
+    desc: "Run student JS against test cases in a sandbox",
+    blurb: "Best for plain script-style JS (function declarations, console.log) — ES module import/export isn't supported by the sandbox.",
+    fields: [
+      {
+        key: "evaluationMode", label: "Evaluation mode", type: "select",
+        options: [
+          { v: "function", t: "Function — call one function against test cases" },
+          { v: "multi-function", t: "Multi-function — call several named functions" },
+          { v: "script", t: "Script — compare console.log output" }
+        ]
+      },
+      {
+        key: "entryFunction", label: "Entry function name", sub: "the function to call", ph: "isPrime", required: true,
+        showIf: d => (d.evaluationMode || "function") === "function"
+      },
+      {
+        key: "testCases", label: "Test cases", sub: "JSON array of { input, expected }", type: "textarea", required: true,
+        ph: '[{"input": 2, "expected": true}, {"input": 4, "expected": false}]',
+        showIf: d => (d.evaluationMode || "function") === "function"
+      },
+      {
+        key: "functions", label: "Functions", sub: "JSON array of { name, testCases }, one entry per function", type: "textarea", required: true,
+        ph: '[{"name":"sum","testCases":[{"input":[2,3],"expected":5}]}]',
+        showIf: d => d.evaluationMode === "multi-function"
+      },
+      {
+        key: "expectedLogs", label: "Expected console.log output", sub: "JSON array of strings, in order", type: "textarea", required: true,
+        ph: '["Hello World", "42"]',
+        showIf: d => d.evaluationMode === "script"
+      },
+      { key: "submissions", type: "submissions", subFields: SUBS_JS }
     ]
   }
 };
@@ -155,7 +199,8 @@ function collectPayload() {
 
     if (f.type === "url" && !/^https?:\/\//i.test(val)) errors.push(`"${f.label}" must start with http:// or https://`);
 
-    if (f.key === "testCases" || f.key === "expectedLogs") {
+    // Author: Arma Sahar — "functions" (multi-function mode) is JSON too.
+    if (f.key === "testCases" || f.key === "expectedLogs" || f.key === "functions") {
       try { payload[f.key] = JSON.parse(val); }
       catch { errors.push(`"${f.label}" is not valid JSON.`); }
       continue;
@@ -326,6 +371,19 @@ async function pollJob(card) {
 }
 
 // ---------- Result rendering ----------
+// Author: Arma Sahar — the JS evaluator's feedback is a structured object
+// ({ summary, strengths, issues, recommendations }, see feedbackService.js),
+// not a plain string like the visual evaluator's. Turn it into readable
+// text instead of falling through to a raw JSON dump. Returns null for any
+// object that isn't this shape, so it never affects other evaluators.
+function formatJsFeedback(fb) {
+  if (!fb || typeof fb !== "object" || !("summary" in fb)) return null;
+  const parts = [fb.summary];
+  if (Array.isArray(fb.issues) && fb.issues.length) parts.push("Issues:\n- " + fb.issues.join("\n- "));
+  if (Array.isArray(fb.recommendations) && fb.recommendations.length) parts.push("Recommendations:\n- " + fb.recommendations.join("\n- "));
+  return parts.join("\n\n");
+}
+
 function normalizeResults(ret) {
   if (!ret) return [];
   let list = ret.result ?? ret.results ?? ret;
@@ -349,7 +407,8 @@ function normalizeResults(ret) {
       codeBreakdown: e.codeBreakdown,
       visualBreakdown: e.visualBreakdown ?? (Array.isArray(fb?.breakdown) ? fb.breakdown : null),
       manualReviewDetail: e.manualReviewDetail,
-      feedback: typeof fb === "object" ? (fb.feedback ?? JSON.stringify(fb, null, 2)) : fb,
+      feedback: typeof fb === "object" ? (formatJsFeedback(fb) ?? fb.feedback ?? JSON.stringify(fb, null, 2)) : fb,
+      aiFeedback: e.aiFeedback ?? e.evaluation?.aiFeedback,
       error: e.error ?? e.evaluation?.error,
       manualReviewItems: e.manualReviewItems,
       raw: e
@@ -388,6 +447,9 @@ function renderResult(ret) {
       html += `<div class="explain"><b>Needs manual review:</b> ${esc(it.manualReviewItems.join(", "))}</div>`;
     }
     if (it.feedback) html += `<div class="feedback">${esc(it.feedback)}</div>`;
+    if (it.aiFeedback && typeof it.aiFeedback === "string") {
+      html += `<div class="feedback"><b>AI mentor feedback:</b><br>${esc(it.aiFeedback)}</div>`;
+    }
 
     html += rawBlock(it.raw);
     return html;
