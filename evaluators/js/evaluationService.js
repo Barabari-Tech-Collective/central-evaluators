@@ -7,6 +7,47 @@ import { generateAIFeedback } from "./aiFeedbackService.js";
 import { stripModuleSyntax } from "./moduleSyntax.js";
 
 // Author: Arma Sahar
+// Bug (jsBugs.md #14): a malformed request payload (e.g. a "functions"
+// array of plain { input, expected } test cases, missing the
+// { name, testCases } wrapper multi-function mode requires) used to throw
+// a raw, uncaught TypeError ("fn.testCases is not iterable") straight out
+// of the loop below — that failed the whole BullMQ job with a confusing
+// technical message instead of a clear, actionable one. Validate the
+// shape up front and fail the same clean way a syntax error does.
+function validateEvaluationInput({ evaluationMode, entryFunction, testCases, expectedLogs, functions }) {
+  if (evaluationMode === "function") {
+    if (!entryFunction || typeof entryFunction !== "string") {
+      return "Function mode requires an entryFunction name.";
+    }
+    if (!Array.isArray(testCases) || testCases.length === 0) {
+      return "Function mode requires a non-empty testCases array of { input, expected }.";
+    }
+    return null;
+  }
+  if (evaluationMode === "multi-function") {
+    if (!Array.isArray(functions) || functions.length === 0) {
+      return 'Multi-function mode requires a non-empty "functions" array of { name, testCases }.';
+    }
+    for (const [i, fn] of functions.entries()) {
+      if (!fn || typeof fn.name !== "string" || !fn.name) {
+        return `functions[${i}] is missing a string "name".`;
+      }
+      if (!Array.isArray(fn.testCases) || fn.testCases.length === 0) {
+        return `functions[${i}] ("${fn.name}") is missing a non-empty "testCases" array — each entry needs { name, testCases: [{ input, expected }, ...] }.`;
+      }
+    }
+    return null;
+  }
+  if (evaluationMode === "script") {
+    if (!Array.isArray(expectedLogs) || expectedLogs.length === 0) {
+      return "Script mode requires a non-empty expectedLogs array.";
+    }
+    return null;
+  }
+  return `Unsupported evaluationMode: "${evaluationMode}". Use "function", "multi-function", or "script".`;
+}
+
+// Author: Arma Sahar
 // Bugs fixed (jsBugs.md #1, #2):
 //  1. Multi-function mode did `total = totalTests` on an undeclared
 //     variable. ES modules run in strict mode, so that threw
@@ -46,6 +87,20 @@ export async function evaluateStudent({
     return {
       score: 0,
       feedback: [{ testCase: "syntax", feedback: astAnalysis.error }]
+    };
+  }
+
+  const validationError = validateEvaluationInput({
+    evaluationMode,
+    entryFunction,
+    testCases,
+    expectedLogs,
+    functions
+  });
+  if (validationError) {
+    return {
+      score: 0,
+      feedback: [{ testCase: "validation", feedback: validationError }]
     };
   }
 
