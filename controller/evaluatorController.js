@@ -46,6 +46,29 @@ async function validateVisualPayload(payload) {
   }
 }
 
+// Author: Arma Sahar (backendBugs.md #7)
+// Backend submissions used to reach `extractSubmission()` (inside the
+// worker, after the job was already queued and picked up) with zero
+// validation — a malformed or malicious payload burned a full BullMQ
+// attempt budget (3 retries, per queueManager.js) before failing, and the
+// caller never got a clean 400. `visual` payloads already fail fast here,
+// synchronously, before anything is queued; this brings `backend` in line
+// with that. Only a syntax + allowlist check runs here (cheap, no DNS) —
+// the full SSRF check (assertSafeUrl, with DNS resolution) still runs
+// again right before the actual clone, same as the visual evaluator does.
+function validateBackendPayload(payload) {
+  const { repoUrl, rubric } = payload;
+
+  if (typeof repoUrl !== 'string' || !repoUrl.trim()) {
+    throw new ValidationError('repoUrl is required');
+  }
+  assertUrlSyntax(repoUrl, { allowedHosts: getAllowedGitHosts() });
+
+  if (!rubric || !Array.isArray(rubric.criteria) || rubric.criteria.length === 0) {
+    throw new ValidationError('rubric.criteria must be a non-empty array');
+  }
+}
+
 export async function evaluate(req, res) {
   try {
     const payload = req.body || {};
@@ -59,6 +82,10 @@ export async function evaluate(req, res) {
 
     if (payload.type === 'visual') {
       await validateVisualPayload(payload);
+    }
+
+    if (payload.type === 'backend') {
+      validateBackendPayload(payload);
     }
 
     const jobs = await routeEvaluation(payload);

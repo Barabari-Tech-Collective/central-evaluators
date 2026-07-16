@@ -546,11 +546,18 @@ ${criteriaTests.join('\n')}
 }
 
 // ── Inject into E2B Sandbox ────────────────────────────────────────────────────
-export async function injectEvaluatorTests(sandbox, rubric) {
+// Bug (backendBugs.md #3): jestRunner.js calls this as
+// injectEvaluatorTests(sandbox, projectPath, rubric) — 3 args — but this
+// function only declared (sandbox, rubric), so `rubric` silently received
+// `projectPath` and the real rubric was dropped. Added the `projectPath`
+// param and used it in place of the hardcoded "/home/user/app" so the
+// generated test file always matches wherever the project was actually
+// uploaded, instead of relying on that path staying in sync by coincidence.
+export async function injectEvaluatorTests(sandbox, projectPath, rubric) {
     console.log(`[testInjector] No test files found. Generating evaluator test suite...`);
 
     const readCmd = await sandbox.commands.run(
-        `cat /home/user/app/server.js 2>/dev/null || cat /home/user/app/app.js 2>/dev/null || cat /home/user/app/index.js 2>/dev/null || echo ""`
+        `cat ${projectPath}/server.js 2>/dev/null || cat ${projectPath}/app.js 2>/dev/null || cat ${projectPath}/index.js 2>/dev/null || echo ""`
     );
     const serverCode = readCmd.stdout || '';
     console.log(`[testInjector] Read ${serverCode.length} bytes from server entry point`);
@@ -559,7 +566,7 @@ export async function injectEvaluatorTests(sandbox, rubric) {
     console.log(`[testInjector] Detected ${routes.length} routes:`, routes.map(r => `${r.method} ${r.path}`).join(', '));
 
     const testContent = generateTestFileContent(routes, rubric);
-    await sandbox.files.write('/home/user/app/evaluator.test.js', testContent);
+    await sandbox.files.write(`${projectPath}/evaluator.test.js`, testContent);
     console.log(`[testInjector] Injected evaluator.test.js (${testContent.length} bytes)`);
 
     return { injected: true, detectedRoutes: routes };

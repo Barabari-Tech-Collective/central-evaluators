@@ -144,18 +144,23 @@ def test_app_loadable():
 `;
 }
 
-export async function injectPythonTests(sandbox, rubric) {
+// Bug (backendBugs.md #3): pytestRunner.js calls this as
+// injectPythonTests(sandbox, projectPath, rubric) — 3 args — but this
+// function only declared (sandbox, rubric), so `rubric` silently received
+// `projectPath` and the real rubric was dropped. Added the `projectPath`
+// param and used it instead of the hardcoded "/home/user/app".
+export async function injectPythonTests(sandbox, projectPath, rubric) {
     console.log(`[pythonTestInjector] Generating Python/FastAPI tests...`);
-    
+
     // Find entry point code to extract routes
     const readCmd = await sandbox.commands.run(
-        `cat /home/user/app/main.py 2>/dev/null || cat /home/user/app/app.py 2>/dev/null || echo ""`
+        `cat ${projectPath}/main.py 2>/dev/null || cat ${projectPath}/app.py 2>/dev/null || echo ""`
     );
     const code = readCmd.stdout || "";
     const routes = extractPythonRoutes(code);
-    
+
     const testContent = generatePythonTestFile(routes, rubric);
-    await sandbox.files.write('/home/user/app/test_evaluator.py', testContent);
-    
+    await sandbox.files.write(`${projectPath}/test_evaluator.py`, testContent);
+
     return { injected: true, detectedRoutes: routes };
 }

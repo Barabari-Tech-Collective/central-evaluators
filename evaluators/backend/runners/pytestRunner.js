@@ -1,4 +1,5 @@
 import { injectPythonTests } from "../injectors/pyTestInjector.js";
+import { normalizePytestResults } from "../utils/normalizeResults.js";
 
 export default async function runPytestEvaluation(
   sandbox,
@@ -37,9 +38,22 @@ export default async function runPytestEvaluation(
     timeout: 120000
   });
 
-  const result = await sandbox.commands.run(`
-    cat ${outputFile}
-  `);
+  // Bug (backendBugs.md #6): same failure mode as the Jest runner — if
+  // pytest never produced a report (e.g. the app couldn't be imported), the
+  // `cat` used to throw and crash the whole job.
+  let raw;
+  try {
+    const result = await sandbox.commands.run(`cat ${outputFile}`);
+    raw = JSON.parse(result.stdout);
+  } catch (err) {
+    return {
+      passedCount: 0,
+      totalTests: 0,
+      test_details: [],
+      warnings: [`Pytest results file was not produced — the test run likely crashed before completing (${err.message}).`],
+      execution_logs: []
+    };
+  }
 
-  return JSON.parse(result.stdout);
+  return normalizePytestResults(raw);
 }

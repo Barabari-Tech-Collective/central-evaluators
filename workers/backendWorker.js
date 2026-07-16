@@ -3,6 +3,7 @@ import redisConnection from '../config/redis.js';
 import queueManager from '../config/queueManager.js';
 import logger from '../config/logger.js';
 import { evaluateBackendProject } from '../evaluators/backend/evaluatorService.js';
+import { withTimeout } from '../evaluators/react/utils/timeout.js';
 
 
 let backendWorker = null;
@@ -19,7 +20,17 @@ export async function initializeBackendWorker() {
       async (job) => {
         try {
           logger.info(`Starting Backend evaluation: ${job.id}`);
-          const results = await evaluateBackendProject(job.data); // V-41: must await
+          // Bug (backendBugs.md #8): unlike visualWorker.js, this call was
+          // never wrapped in withTimeout. A hung sandbox command (stalled
+          // `npm install`, a student server that never exits, an infinite
+          // loop under test) would block this worker slot forever — with
+          // concurrency 3, three such jobs stall the entire backend queue
+          // for everyone behind them, with no automatic recovery.
+          const results = await withTimeout(
+            evaluateBackendProject(job.data),
+            config.timeout,
+            `backend-eval ${job.id}`
+          );
           logger.info(`Backend Job ${job.id} completed`);
           return { success: true, results };
         } catch (err) {

@@ -12,8 +12,12 @@ export default async function detectLanguage(sandbox) {
     return "node";
   }
 
+  // Bug (backendBugs.md #11): only checked requirements.txt/main.py, so a
+  // FastAPI project using only app.py (the entry point injectors/pyTestInjector.js
+  // itself already treats as valid — it reads main.py *or* app.py) silently
+  // misdetected as Node and the whole run failed downstream.
   const pythonCheck = await sandbox.commands.run(
-    `test -f ${root}/requirements.txt -o -f ${root}/main.py && echo python || echo none`
+    `test -f ${root}/requirements.txt -o -f ${root}/main.py -o -f ${root}/app.py && echo python || echo none`
   );
 
   if (pythonCheck.stdout.trim() === "python") {
