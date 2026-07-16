@@ -4,7 +4,24 @@
 // Migrate JS execution to isolated-vm or an E2B sandbox. See VISUAL_EVALUATOR_AUDIT.md V-34.
 import { VM } from "vm2";
 
-export function runJavaScript({
+// Author: Arma Sahar
+// vm2's own `timeout` option (below, 1000ms) only bounds *synchronous*
+// execution inside a single vm.run() call — it does nothing for
+// async/await, since control returns to Node's event loop while waiting.
+// Without a separate cap, a student function that awaits a promise that
+// never settles (e.g. `await new Promise(() => {})`) would hang this test
+// case forever. This is that separate, async-aware ceiling.
+const ASYNC_TIMEOUT_MS = 5000;
+
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Async execution timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+export async function runJavaScript({
   studentCode,
   evaluationMode,
   entryFunction,
@@ -14,6 +31,44 @@ export function runJavaScript({
 
   const logs = [];
 
+  // Author: Arma Sahar
+  // Bug (jsBugs.md #13): `setTimeout` wasn't defined in the sandbox at all,
+  // so the extremely common "simulate async work" pattern
+  // (`await new Promise(r => setTimeout(r, ms))`) threw ReferenceError —
+  // and since that throw happens inside a Promise executor, it doesn't
+  // surface as a normal synchronous error, it becomes an *unhandled promise
+  // rejection* after this function has already returned. Fix: give the
+  // sandbox a real setTimeout/clearTimeout (delegating to Node's own), but
+  // track every timer it creates so we can force-clear them once this test
+  // case is done grading — otherwise a student `setTimeout(fn, 999999)`
+  // would keep a stale VM context alive in Node's event loop indefinitely.
+  const pendingTimers = new Set();
+  const sandboxSetTimeout = (fn, ms, ...args) => {
+    const id = setTimeout(fn, ms, ...args);
+    pendingTimers.add(id);
+    return id;
+  };
+  const sandboxClearTimeout = (id) => {
+    clearTimeout(id);
+    pendingTimers.delete(id);
+  };
+
+  // Author: Arma Sahar
+  // Bug (jsBugs.md #10): the sandbox only defined `console`, so any student
+  // file ending in the extremely common Node/CommonJS convention
+  // `module.exports = { foo };` threw "module is not defined" — which
+  // aborted the ENTIRE run (see the try/catch below), failing every test
+  // case even though the function itself was correct. Fix: give the
+  // sandbox inert `module`/`exports` objects so that line is a harmless
+  // no-op (we always call the entry function by name, never through
+  // module.exports, so we don't need it to do anything real). `require`
+  // gets a stub that throws a clear message instead of a confusing
+  // ReferenceError, since there's no real module resolution in-sandbox.
+  //
+  // `fetch` is deliberately a stub too, not real network access: letting
+  // arbitrary student-submitted code make outbound HTTP requests from the
+  // grading server is an SSRF/abuse vector, so "API calls" inside graded
+  // functions aren't supported — same reasoning as `require`.
   const vm = new VM({
     timeout: 1000,
     sandbox: {
@@ -21,7 +76,21 @@ export function runJavaScript({
         log: (...args) => {
           logs.push(args.join(" "));
         }
-      }
+      },
+      module: { exports: {} },
+      exports: {},
+      require: () => {
+        throw new Error(
+          "require() is not available in the grading sandbox — only code within this file is evaluated."
+        );
+      },
+      fetch: () => {
+        throw new Error(
+          "fetch() is not available in the grading sandbox — network access isn't permitted for graded code."
+        );
+      },
+      setTimeout: sandboxSetTimeout,
+      clearTimeout: sandboxClearTimeout
     }
   });
 
@@ -54,11 +123,22 @@ export function runJavaScript({
         ? testCase.input
         : [testCase.input];
 
-      const result = vm.run(`
+      let result = vm.run(`
         ${entryFunction}(
           ...${JSON.stringify(args)}
         )
       `);
+
+      // Author: Arma Sahar
+      // Bug (jsBugs.md #13): `async function`s and Promise-returning
+      // functions were graded synchronously — `result` was always the
+      // pending Promise object itself (which JSON.stringifies to "{}"),
+      // never its resolved value, so every async entry function failed
+      // regardless of correctness. Fix: await it (bounded by
+      // ASYNC_TIMEOUT_MS, see above) before comparing.
+      if (result && typeof result.then === "function") {
+        result = await withTimeout(Promise.resolve(result), ASYNC_TIMEOUT_MS);
+      }
 
       const passed =
         JSON.stringify(result) ===
@@ -75,7 +155,7 @@ export function runJavaScript({
     // -------------------------
     // SCRIPT MODE
     // -------------------------
-  
+
 if (evaluationMode === "script") {
   const normalizedActual =
     logs.map(v => String(v).trim());
@@ -126,5 +206,11 @@ if (evaluationMode === "script") {
       passed: false,
       error: err.message
     };
+  } finally {
+    // Author: Arma Sahar — force-clear any timers the student's code
+    // scheduled but that never fired (e.g. a huge delay, or one still
+    // pending when ASYNC_TIMEOUT_MS won the race), so nothing keeps this
+    // VM context alive in Node's event loop after grading moves on.
+    for (const id of pendingTimers) clearTimeout(id);
   }
 }

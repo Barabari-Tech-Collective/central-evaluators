@@ -4,6 +4,7 @@ import { analyzeCode } from "./astService.js";
 import { calculateScore } from "./gradingService.js";
 import { generateFeedback } from "./feedbackService.js";
 import { generateAIFeedback } from "./aiFeedbackService.js";
+import { stripModuleSyntax } from "./moduleSyntax.js";
 
 // Author: Arma Sahar
 // Bugs fixed (jsBugs.md #1, #2):
@@ -27,7 +28,18 @@ export async function evaluateStudent({
   expectedLogs,
   functions
 }) {
-  const studentCode = fs.readFileSync(filePath, "utf8");
+  const rawCode = fs.readFileSync(filePath, "utf8");
+
+  // Author: Arma Sahar
+  // Bug (jsBugs.md #11): a large share of "basic function" submissions use
+  // ES module boilerplate (`export function foo(){}`,
+  // `export default function foo(){}`). The sandbox executes code as a
+  // plain script (no module loader), and the AST check parsed as
+  // `sourceType: "script"`, so both steps rejected valid, correct
+  // functions purely for using `export`. Fix: strip the import/export
+  // wrapper once, up front, and analyze/run that normalized code
+  // everywhere below.
+  const studentCode = stripModuleSyntax(rawCode);
 
   const astAnalysis = analyzeCode(studentCode);
   if (!astAnalysis.syntaxValid) {
@@ -49,7 +61,12 @@ export async function evaluateStudent({
       for (const testCase of fn.testCases) {
         total++;
 
-        const result = runJavaScript({
+        // Author: Arma Sahar
+        // Bug (jsBugs.md #13): runJavaScript is now async (it awaits
+        // async/Promise-returning entry functions) — every call site has
+        // to await it or `result` here would be a pending Promise instead
+        // of the actual { passed, ... } outcome.
+        const result = await runJavaScript({
           studentCode,
           evaluationMode: "function",
           entryFunction: fn.name,
@@ -77,7 +94,7 @@ export async function evaluateStudent({
     total = testCases.length;
 
     for (const testCase of testCases) {
-      const result = runJavaScript({
+      const result = await runJavaScript({
         studentCode,
         evaluationMode,
         entryFunction,
@@ -87,8 +104,19 @@ export async function evaluateStudent({
       if (result.passed) {
         passed++;
       } else {
+        // Author: Arma Sahar
+        // Bug (jsBugs.md #12): when execution threw (e.g. a ReferenceError,
+        // or previously "module is not defined" — see executionService.js),
+        // `runJavaScript` returns `{ passed: false, error }` with no
+        // `expected`/`actual` keys. This branch ignored `result.error` and
+        // always showed "Expected undefined but got undefined", hiding the
+        // real reason a correct-looking function failed every test case.
+        // Multi-function mode already checked `result.error` first — bring
+        // function mode in line with it.
         failures.push({
-          feedback: `Expected ${JSON.stringify(result.expected)} but got ${JSON.stringify(result.actual)}`
+          feedback:
+            result.error ||
+            `Expected ${JSON.stringify(result.expected)} but got ${JSON.stringify(result.actual)}`
         });
       }
     }
@@ -98,7 +126,7 @@ export async function evaluateStudent({
   // SCRIPT MODE
   // ---------------------
   if (evaluationMode === "script") {
-    const result = runJavaScript({ studentCode, evaluationMode, expectedLogs });
+    const result = await runJavaScript({ studentCode, evaluationMode, expectedLogs });
 
     passed = result.matched;
     total = result.total;

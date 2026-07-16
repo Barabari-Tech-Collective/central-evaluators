@@ -178,3 +178,133 @@ evaluator is:
   eyeball check, open the app and try it — the server is left running at
   the point this session ended.
 
+---
+
+## 5. Follow-up: "basic functions" still failing in production
+
+Reported after the first round of fixes shipped: real student submissions
+were still failing, including ones with obviously correct logic. Root
+cause was **not** missing "advanced JS" support — modern syntax (arrow
+functions, destructuring, template literals, async/await, classes, default
+params, spread/rest, optional chaining) already parses and runs fine, since
+acorn is configured with `ecmaVersion: "latest"` and vm2 supports all of
+that once code is in scope. The actual causes were narrower and all three
+made "basic function" submissions fail regardless of whether the logic was
+correct:
+
+| # | File | Issue |
+|---|------|-------|
+| 10 | `executionService.js` | 🔴 The vm2 sandbox only defined `console`. The single most common Node/CommonJS starter-template line, `module.exports = { foo };` (or `require(...)` for a debug import), threw `ReferenceError: module/require is not defined`. Because `vm.run(studentCode)` runs the *whole* file in one shot, that error aborted the entire evaluation before the entry function was ever called — a perfectly correct function scored 0 on every test case. |
+| 11 | `evaluationService.js` (new: `moduleSyntax.js`) | 🔴 The AST check parsed with the default `sourceType: "script"`, and the sandbox executes as a plain script too — so any `import`/`export`/`export default` (extremely common in ES-module course templates) failed the syntax check outright, before execution was even attempted. |
+| 12 | `evaluationService.js` | 🟡 When `runJavaScript` returned `{ passed: false, error }` (an actual exception, not a wrong return value), the function-mode failure branch ignored `result.error` and always displayed "Expected undefined but got undefined" — so even once you *had* one of the failures above, the feedback gave no clue why. This is very likely why the real cause (#10/#11) went unnoticed: the UI/feedback never showed the real error. Multi-function mode already handled this correctly; function mode didn't.
+
+### Fix
+
+- Added `evaluators/js/moduleSyntax.js` (`stripModuleSyntax`): parses the
+  code once as `sourceType: "module"`, then uses acorn's exact character
+  offsets to surgically remove/rewrite just the `import`/`export` wrapper
+  text (e.g. `export function foo(){}` → `function foo(){}`), leaving
+  everything else byte-for-byte untouched. If the code doesn't parse as a
+  module either, it's returned unchanged so the normal script-mode parse
+  still reports the real syntax error — this only strips well-formed
+  module syntax, it never masks a genuine bug in the student's code
+  (verified with a deliberately broken function, see tests below).
+  Called once in `evaluationService.js` right after reading the file, so
+  AST analysis and execution both see the same normalized code.
+- `executionService.js`'s sandbox now also defines `module: { exports: {} }`
+  and `exports: {}` (inert — we always call the entry function by name, so
+  we never need to read from them) and a `require` stub that throws a
+  clear, gradeable message instead of a bare ReferenceError.
+- `evaluationService.js`'s function-mode failure branch now checks
+  `result.error` first, matching multi-function mode.
+
+### Confirmed by running the code
+
+```
+$ node scripts/test-js-evaluator.mjs
+✅ module boilerplate tolerated: module.exports = { sum } — score=90
+✅ module boilerplate tolerated: module.exports = sum (default-style) — score=90
+✅ module boilerplate tolerated: export function sum — score=90
+✅ module boilerplate tolerated: export default function sum — score=90
+✅ module boilerplate tolerated: import + export function (mixed) — score=90
+✅ require(): clear message, not a silent module crash
+✅ genuine syntax error is still reported
+✅ real execution error is surfaced in feedback, not swallowed
+... (all prior checks still pass)
+All checks passed.
+
+$ npm run test:unit   # full suite including visual evaluator tests
+(all ✅, exit code 0)
+```
+
+Before this fix, cases like `module.exports = { sum }` and
+`export function sum(){}` scored 0 with a useless "Expected undefined but
+got undefined" message despite `sum` being implemented correctly — that
+combination is almost certainly what generated the "doesn't work even for
+basic functions" reports.
+
+---
+
+## 6. Follow-up: async functions and API calls
+
+Asked directly: does the evaluator support intermediate/advanced JS and
+async/API calls? Checked with real test cases rather than assuming:
+
+- **Basic/intermediate — confirmed working**: destructured params, default
+  params, template literals, spread/rest args, classes with methods,
+  closures/higher-order functions, `.map/.filter/.reduce`, generators.
+- **Async — confirmed broken** (bug #13):
+
+| Pattern | Before |
+|---|---|
+| `async function sum(a,b){ return a+b; }` | Always failed — graded on the unresolved `Promise` object (`JSON.stringify` → `"{}"`), never its resolved value |
+| Plain function returning a `Promise` | Same |
+| `await fetch(...)` | `fetch` undefined in the sandbox → generic ReferenceError |
+| `await new Promise(r => setTimeout(r, ms))` | `setTimeout` undefined — and because the throw happens inside a Promise executor, it became an **unhandled promise rejection** *after* `runJavaScript` had already returned a (wrong) result, rather than a normal caught error. In a bare Node process this crashed the process outright; in the real server it's caught by the existing global `unhandledRejection` safety net, but the job still silently returned a wrong grade with the real cause disconnected from it in the logs. |
+
+### Fix (`executionService.js`, `evaluationService.js`)
+
+- `runJavaScript` is now `async` and awaits the entry function's result
+  when it's thenable, bounded by a new `ASYNC_TIMEOUT_MS` (5000ms) —
+  separate from vm2's own `timeout` option, which only bounds *synchronous*
+  execution and does nothing for pending async work. All three call sites
+  in `evaluationService.js` (function, multi-function, script mode) now
+  `await` it.
+- Sandbox gains a real `setTimeout`/`clearTimeout` (delegating to Node's),
+  so `await new Promise(r => setTimeout(r, ms))` — the standard way to
+  simulate async delay — works correctly. Every timer a test case creates
+  is tracked and force-cleared in a `finally` block once grading for that
+  case finishes, so a huge or forgotten delay can't keep a stale sandbox
+  context alive in the event loop.
+- `fetch` is a deliberate stub that throws a clear "not available" message
+  (`require()`'s existing pattern), **not** real network access: letting
+  arbitrary student-submitted code make outbound requests from the grading
+  server is an SSRF/abuse vector. This was a deliberate scope decision, not
+  an oversight — flagged and confirmed before implementing.
+- A student function that never resolves now times out cleanly after 5s
+  with a clear "Async execution timed out after 5000ms" message instead of
+  hanging that test case (or, in the old code, going undetected as an
+  unhandled rejection).
+
+### Confirmed by running the code
+
+```
+✅ async support: async/await returning a value — score=90
+✅ async support: async with an internal await delay — score=90
+✅ async support: plain Promise-returning function — score=90
+✅ fetch(): clear 'not available' message
+✅ rejected async function surfaces its real error — ["nope"]
+✅ a never-resolving async function times out instead of hanging — elapsed=5004ms
+... (all prior checks still pass)
+All checks passed.
+
+$ npm run test:unit   # full suite including visual evaluator tests
+(all ✅, exit code 0)
+```
+
+Verified the timeout/cleanup path specifically: after a never-resolving
+async function's test case finishes (via the 5s timeout), the Node process
+still exits cleanly with no lingering timers/handles — confirming the
+per-case timer cleanup actually works, not just that the score comes back
+right.
+
