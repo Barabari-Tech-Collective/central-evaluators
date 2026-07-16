@@ -10,6 +10,20 @@
  *   - #6:    the JS file scanner skips node_modules/.git and finds the
  *            student's real file.
  *   - #7:    zero test cases never produces a NaN score.
+ *   - #10:   module.exports / require() don't crash the whole sandbox run.
+ *   - #11:   `export`/`export default`/`import` don't fail syntax checks or
+ *            execution — the huge majority of "basic function doesn't work"
+ *            complaints turned out to be ES-module boilerplate, not the
+ *            student's actual logic.
+ *   - #12:   a real execution error (not a value mismatch) is surfaced in
+ *            the feedback instead of a useless "Expected undefined but got
+ *            undefined".
+ *   - #13:   async functions and Promise-returning functions are awaited
+ *            and graded on their resolved value (not always "failed"),
+ *            fetch() fails with a clear message instead of silently, a
+ *            student function that never resolves times out cleanly
+ *            instead of hanging the worker, and a rejected async function
+ *            surfaces its real error message.
  *
  * Run: node scripts/test-js-evaluator.mjs   (exit 0 = all fixed)
  */
@@ -78,6 +92,159 @@ function writeTempFile(content) {
     ]
   });
   check("function mode: array input passes the correct case", result.passed === 1, `passed=${result.passed}`);
+}
+
+// ---------------------------------------------------------------------------
+// #10/#11 — the actual "basic functions don't work" complaint: common
+// module boilerplate (CommonJS module.exports, ES export/export default,
+// import) must not break otherwise-correct functions.
+// ---------------------------------------------------------------------------
+{
+  const cases = [
+    ["module.exports = { sum }", "function sum(a, b) { return a + b; }\nmodule.exports = { sum };"],
+    ["module.exports = sum (default-style)", "function sum(a, b) { return a + b; }\nmodule.exports = sum;"],
+    ["export function sum", "export function sum(a, b) { return a + b; }"],
+    ["export default function sum", "export default function sum(a, b) { return a + b; }"],
+    ["import + export function (mixed)", "import fs from 'fs';\nexport function sum(a, b) { return a + b; }"]
+  ];
+  for (const [label, code] of cases) {
+    const file = writeTempFile(code);
+    const result = await evaluateStudent({
+      filePath: file,
+      evaluationMode: "function",
+      entryFunction: "sum",
+      testCases: [{ input: [2, 3], expected: 5 }]
+    });
+    check(`module boilerplate tolerated: ${label}`, result.passed === 1, `score=${result.score} issues=${JSON.stringify(result.feedback?.issues)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// #10 — require() gets a clear error instead of crashing the whole run
+// ---------------------------------------------------------------------------
+{
+  const file = writeTempFile("const fs = require('fs');\nfunction sum(a, b) { return a + b; }");
+  const result = await evaluateStudent({
+    filePath: file,
+    evaluationMode: "function",
+    entryFunction: "sum",
+    testCases: [{ input: [2, 3], expected: 5 }]
+  });
+  check(
+    "require(): clear message, not a silent module crash",
+    (result.feedback?.issues || []).some(i => i.includes("require() is not available")),
+    JSON.stringify(result.feedback?.issues)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// #11 — a genuine syntax error must still be reported (module-stripping
+// must not mask real bugs in student code)
+// ---------------------------------------------------------------------------
+{
+  const file = writeTempFile("function sum(a, b) { return a + ; }");
+  const result = await evaluateStudent({
+    filePath: file,
+    evaluationMode: "function",
+    entryFunction: "sum",
+    testCases: [{ input: [2, 3], expected: 5 }]
+  });
+  check(
+    "genuine syntax error is still reported",
+    result.score === 0 && result.feedback?.[0]?.testCase === "syntax",
+    JSON.stringify(result.feedback)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// #12 — a real execution error is surfaced, not "Expected undefined but got undefined"
+// ---------------------------------------------------------------------------
+{
+  const file = writeTempFile("function sum(a, b) { throw new Error('boom'); }");
+  const result = await evaluateStudent({
+    filePath: file,
+    evaluationMode: "function",
+    entryFunction: "sum",
+    testCases: [{ input: [2, 3], expected: 5 }]
+  });
+  check(
+    "real execution error is surfaced in feedback, not swallowed",
+    (result.feedback?.issues || []).some(i => i.includes("boom")),
+    JSON.stringify(result.feedback?.issues)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// #13 — async functions / Promises are awaited and graded correctly
+// ---------------------------------------------------------------------------
+{
+  const asyncCases = [
+    ["async/await returning a value", "async function sum(a,b) { return a + b; }"],
+    ["async with an internal await delay", "async function sum(a,b) { await new Promise(r => setTimeout(r, 20)); return a + b; }"],
+    ["plain Promise-returning function", "function sum(a,b) { return Promise.resolve(a + b); }"]
+  ];
+  for (const [label, code] of asyncCases) {
+    const file = writeTempFile(code);
+    const result = await evaluateStudent({
+      filePath: file,
+      evaluationMode: "function",
+      entryFunction: "sum",
+      testCases: [{ input: [2, 3], expected: 5 }]
+    });
+    check(`async support: ${label}`, result.passed === 1, `score=${result.score} issues=${JSON.stringify(result.feedback?.issues)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// #13 — fetch() fails with a clear message, not a silent wrong grade
+// ---------------------------------------------------------------------------
+{
+  const file = writeTempFile("async function sum(a,b) { await fetch('https://example.com'); return a + b; }");
+  const result = await evaluateStudent({
+    filePath: file,
+    evaluationMode: "function",
+    entryFunction: "sum",
+    testCases: [{ input: [2, 3], expected: 5 }]
+  });
+  check(
+    "fetch(): clear 'not available' message",
+    (result.feedback?.issues || []).some(i => i.includes("fetch() is not available")),
+    JSON.stringify(result.feedback?.issues)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// #13 — an async function that never resolves times out cleanly (doesn't
+// hang the worker) and a rejected async function surfaces its real error
+// ---------------------------------------------------------------------------
+{
+  const rejectFile = writeTempFile("async function sum() { throw new Error('nope'); }");
+  const rejectResult = await evaluateStudent({
+    filePath: rejectFile,
+    evaluationMode: "function",
+    entryFunction: "sum",
+    testCases: [{ input: [], expected: 1 }]
+  });
+  check(
+    "rejected async function surfaces its real error",
+    (rejectResult.feedback?.issues || []).some(i => i.includes("nope")),
+    JSON.stringify(rejectResult.feedback?.issues)
+  );
+
+  const hangFile = writeTempFile("async function sum() { await new Promise(() => {}); return 1; }");
+  const start = Date.now();
+  const hangResult = await evaluateStudent({
+    filePath: hangFile,
+    evaluationMode: "function",
+    entryFunction: "sum",
+    testCases: [{ input: [], expected: 1 }]
+  });
+  const elapsed = Date.now() - start;
+  check(
+    "a never-resolving async function times out instead of hanging",
+    elapsed < 7000 && (hangResult.feedback?.issues || []).some(i => i.includes("timed out")),
+    `elapsed=${elapsed}ms issues=${JSON.stringify(hangResult.feedback?.issues)}`
+  );
 }
 
 // ---------------------------------------------------------------------------
