@@ -61,7 +61,9 @@ export const evaluateResults = (rubric, testResults) => {
     // Add Performance warnings to the final output
     if (slowTests.length > 0) {
         const slowList = slowTests.map(t => `${t.name} (${t.duration}ms)`).join(', ');
-        testResults.warnings.push(`Performance Warning: ${slowTests.length} tests exceeded the ${PERFORMANCE_THRESHOLD_MS}ms threshold: ${slowList.slice(0, 200)}...`);
+        const truncated = slowList.length > 200 ? `${slowList.slice(0, 200)}...` : slowList;
+        testResults.warnings = testResults.warnings || [];
+        testResults.warnings.push(`Performance Warning: ${slowTests.length} tests exceeded the ${PERFORMANCE_THRESHOLD_MS}ms threshold: ${truncated}`);
     }
 
     // We consider "Pass" to be 70% or greater overall.

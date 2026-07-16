@@ -6,12 +6,16 @@ import logger from '../../config/logger.js';
 dotenv.config();
 
 // V-42: lazy init so a missing GROQ_API_KEY doesn't crash the server at boot.
+// Bug (backendBugs.md #5): baseURL was commented out, so this client sent
+// GROQ_API_KEY to OpenAI's default endpoint (api.openai.com) instead of
+// Groq's — every request failed authentication and fell through to the
+// generic fallback string below, silently disabling AI feedback entirely.
 let _client;
 function getClient() {
   if (!_client) {
     _client = new OpenAI({
       apiKey: process.env.GROQ_API_KEY,
-      // baseURL: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
+      baseURL: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
     });
   }
   return _client;
