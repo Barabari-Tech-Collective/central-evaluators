@@ -308,3 +308,106 @@ still exits cleanly with no lingering timers/handles — confirming the
 per-case timer cleanup actually works, not just that the score comes back
 right.
 
+---
+
+## 7. Follow-up: malformed payload crashed the whole job
+
+Reported from the live UI: pasting a flat `[{ input, expected }, ...]`
+array into the "Functions" field (multi-function mode) while missing the
+`{ name, testCases }` wrapper each entry needs. Reproduced exactly:
+
+| # | File | Issue |
+|---|------|-------|
+| 14 | `evaluationService.js` | 🔴 The multi-function loop (`for (const testCase of fn.testCases)`) had no shape validation before iterating. A malformed `functions` entry — missing `testCases`, or the whole array shaped wrong — threw a raw, uncaught `TypeError: fn.testCases is not iterable` that propagated out of `evaluateStudent`, failing the entire BullMQ job with a confusing technical stack instead of a clean, gradeable result. Same risk existed for `function` mode with a missing/empty `testCases` array and `script` mode with a missing `expectedLogs` array. |
+
+### Fix
+
+Added `validateEvaluationInput()` in `evaluationService.js`, run right after
+the syntax check and before any mode-specific logic. It checks the shape
+required for whichever `evaluationMode` was requested (`entryFunction` +
+non-empty `testCases` for function mode; a non-empty `functions` array
+where every entry has a string `name` and a non-empty `testCases` array for
+multi-function mode; a non-empty `expectedLogs` for script mode) and, on
+failure, returns the same clean `{ score: 0, feedback: [{ testCase:
+"validation", feedback: "<specific message>" }] }` shape a syntax error
+already used — so the job always completes with a gradeable result instead
+of failing outright, and the message says exactly what's wrong (e.g.
+`functions[0] ("validateAge") is missing a non-empty "testCases" array —
+each entry needs { name, testCases: [{ input, expected }, ...] }`).
+
+### Confirmed by running the code
+
+The exact reported payload (`functions: [{ input: 25, expected: "..." }]`,
+missing `name`/`testCases`) now returns a clean validation message instead
+of crashing the job — verified directly and via the regression suite.
+
+---
+
+## 8. Full feature/bug checklist (`scripts/test-js-evaluator.mjs`)
+
+Restructured the regression suite into labeled sections so running it
+prints a readable "what works / what doesn't" report, not just a flat list.
+Ran fresh for this write-up — 34/34 passing, plus the full `npm run
+test:unit` suite (58/58, including the visual evaluator's tests):
+
+```
+## Basic functions
+✅ scalar input (single-arg function) grades correctly
+✅ array input (multi-arg function) grades correctly, incl. a wrong case
+✅ arrow function assigned to const
+
+## Intermediate JS
+✅ destructured params
+✅ default params + template literals
+✅ spread/rest args
+✅ class with a method
+✅ closures / higher-order functions
+✅ array methods (map/filter/reduce)
+✅ generator functions
+
+## Advanced JS: async / Promises / API calls
+✅ async/await returning a value
+✅ async with an internal await delay (setTimeout)
+✅ plain Promise-returning function
+✅ fetch()/API calls: clear 'not available' message (deliberately unsupported)
+✅ rejected async function surfaces its real error message
+✅ a never-resolving async function times out cleanly instead of hanging the worker
+
+## Module boilerplate tolerance (CommonJS / ES modules)
+✅ module.exports = { sum } (CommonJS named)
+✅ module.exports = sum (CommonJS default-style)
+✅ export function sum (ES module)
+✅ export default function sum (ES module)
+✅ import + export function (mixed)
+✅ require(): clear message, doesn't crash the whole sandbox run
+
+## Error reporting quality (real errors, not confusing crashes)
+✅ a genuine syntax error is still reported (module-stripping doesn't mask real bugs)
+✅ a real execution error is surfaced, not 'Expected undefined but got undefined'
+✅ malformed 'functions' shape (missing name/testCases) fails cleanly, not with a raw crash
+✅ empty testCases array fails cleanly, not with a crash
+✅ script mode with missing expectedLogs fails cleanly, not with a crash
+
+## Multi-function mode
+✅ well-formed multi-function payload doesn't throw
+✅ well-formed multi-function payload scores 2/3 passed
+
+## Script mode (console.log comparison)
+✅ script mode matches console.log output in order
+
+## Scoring & grading
+✅ zero test cases never produces a NaN score
+
+## File discovery (fileService.js)
+✅ skips node_modules/.git, finds the student's real file
+
+## Security: repo cloning
+✅ malicious repoUrl is rejected before any shell command runs (no command injection)
+
+## AI feedback (Groq)
+✅ falls back to a real string (not undefined) when the API call fails
+```
+
+Re-run anytime with `node scripts/test-js-evaluator.mjs` (takes ~20s due to
+a deliberate 5s async-timeout test case).
+
