@@ -8,11 +8,15 @@ import logger from './config/logger.js';
 import redisConnection from './config/redis.js';
 
 // Initialize workers
-// NOTE: visual + javascript are started for this deploy (see jsBugs.md for
-// the JS evaluator fixes — Arma Sahar). The other 4 evaluators aren't in
+// NOTE: visual + javascript + backend are started for this deploy (backend
+// added once backendBugs.md's fixes landed — the worker existed and was
+// fully wired to its queue, but was never started here, so
+// backend-evaluation jobs would have sat in "waiting" forever regardless of
+// how correct the evaluator code was). react/python/fullstack aren't in
 // scope yet; re-add their initialize*/stop* calls below to bring them back.
 import { initializeVisualWorker, stopVisualWorker } from './workers/visualWorker.js';
 import { initializeJsWorker, stopJsWorker } from './workers/jsWorker.js';
+import { initializeBackendWorker, stopBackendWorker } from './workers/backendWorker.js';
 
 import { requireApiKey, evaluateRateLimiter } from './middleware/auth.js';
 
@@ -42,12 +46,15 @@ async function startServer() {
     await queueManager.initialize();
     logger.info('✅ Queue manager initialized');
 
-    // 3. Initialize workers (visual + javascript — see import comment above)
+    // 3. Initialize workers (visual + javascript + backend — see import comment above)
     await initializeVisualWorker();
     logger.info('✅ Visual worker initialized');
 
     await initializeJsWorker();
     logger.info('✅ JavaScript worker initialized');
+
+    await initializeBackendWorker();
+    logger.info('✅ Backend worker initialized');
 
     // 4. API routes (V-04: rate limit + API-key auth)
     app.post('/evaluate', evaluateRateLimiter, requireApiKey, evaluate);
@@ -139,6 +146,7 @@ async function shutdown(signal) {
   try {
     await stopVisualWorker();
     await stopJsWorker();
+    await stopBackendWorker();
     await queueManager.disconnect();
     logger.info('Shutdown complete');
     process.exit(0);

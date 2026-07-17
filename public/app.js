@@ -16,9 +16,9 @@ const SUBS_JS = [
 ];
 
 // Author: Arma Sahar — enabling the javascript evaluator now that
-// evaluators/js/* is fixed (see jsBugs.md). Only visual + javascript are
-// wired up on the server for this deploy; the other 4 worker types aren't
-// started (see server.js), so their forms stay out of this map.
+// evaluators/js/* is fixed (see jsBugs.md). visual + javascript + react +
+// backend are wired up on the server for this deploy; python/fullstack
+// aren't started (see server.js), so their forms stay out of this map.
 const EVALUATORS = {
   visual: {
     emoji: "🎨", name: "Visual / UI",
@@ -64,6 +64,22 @@ const EVALUATORS = {
       },
       { key: "submissions", type: "submissions", subFields: SUBS_JS }
     ]
+  },
+  // Author: Arma Sahar — enabling the backend evaluator now that
+  // evaluators/backend/* is fixed (see backendBugs.md). Unlike visual/js,
+  // the backend queue takes one repoUrl + rubric per job — no `submissions`
+  // fan-out, evaluationRouter.js sends the whole payload through as-is.
+  backend: {
+    emoji: "🛠️", name: "Backend / API",
+    desc: "Clone a repo, run Jest/Pytest tests against a grading rubric",
+    blurb: "Best for Express (Node) or FastAPI (Python) projects. One repo per submission — if the repo has no tests, they're auto-generated from your rubric criteria.",
+    fields: [
+      { key: "repoUrl", label: "Repository URL", sub: "the student's repo to clone and grade", type: "url", required: true, ph: "https://github.com/user/repo.git" },
+      {
+        key: "rubricCriteria", label: "Rubric criteria", sub: "JSON array of { name, weight } — weights are points out of 100", type: "textarea", required: true,
+        ph: '[{"name":"Authentication works","weight":40},{"name":"All API endpoints work","weight":30},{"name":"Performance","weight":30}]'
+      }
+    ]
   }
 };
 
@@ -100,6 +116,10 @@ const STATE = {
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const getKey = () => localStorage.getItem("ce_api_key") || "";
+// Every evaluator's scores get displayed through this — round to at most 1
+// decimal place (e.g. 66.66666666666667 -> 66.7) instead of showing raw
+// floats. Non-numbers pass through untouched so `esc()` still handles them.
+const round1 = n => (typeof n === "number" && Number.isFinite(n)) ? Math.round(n * 10) / 10 : n;
 
 let selectedType = "visual";
 
@@ -203,6 +223,18 @@ function collectPayload() {
     if (f.key === "testCases" || f.key === "expectedLogs" || f.key === "functions") {
       try { payload[f.key] = JSON.parse(val); }
       catch { errors.push(`"${f.label}" is not valid JSON.`); }
+      continue;
+    }
+    // Backend evaluator: the form collects a flat "rubricCriteria" array,
+    // but evaluatorController.js/evaluatorService.js expect it nested as
+    // payload.rubric.criteria — same shape scripts/test-backend-evaluator.mjs
+    // exercises.
+    if (f.key === "rubricCriteria") {
+      try {
+        const criteria = JSON.parse(val);
+        if (!Array.isArray(criteria) || criteria.length === 0) throw new Error("empty");
+        payload.rubric = { criteria };
+      } catch { errors.push(`"${f.label}" must be a non-empty JSON array of { name, weight }.`); }
       continue;
     }
     payload[f.key] = val;
@@ -384,18 +416,35 @@ function formatJsFeedback(fb) {
   return parts.join("\n\n");
 }
 
+// Author: Arma Sahar — the backend evaluator's return shape nests the whole
+// scoringService.evaluateResults() result under `score` — itself an object
+// ({ score, maxScore, rubric_breakdown, pass, feedback, warnings, ... }, see
+// backendBugs.md) — not a plain number like every other evaluator. Detect
+// and flatten it here rather than changing evaluatorService.js's
+// already-tested/committed return contract.
+function isBackendScoreShape(s) {
+  return s && typeof s === "object" && typeof s.score === "number" && typeof s.maxScore === "number";
+}
+
 function normalizeResults(ret) {
   if (!ret) return [];
   let list = ret.result ?? ret.results ?? ret;
   if (!Array.isArray(list)) list = [list];
   return list.map(e => {
-    const score = e.score ?? e.total ?? e.evaluation?.score ?? e.evaluation?.total;
-    const fb = e.feedback ?? e.evaluation?.feedback;
+    const backendScore = isBackendScoreShape(e.score) ? e.score : null;
+
+    const score = backendScore ? backendScore.score : (e.score ?? e.total ?? e.evaluation?.score ?? e.evaluation?.total);
+    const maxTotal = backendScore ? backendScore.maxScore : e.maxTotal;
+    // Prefer the real AI-generated feedback string (top-level `feedback`
+    // from evaluatorService.js/feedbackService.js); fall back to
+    // scoringService.js's canned pass/fail summary if that's missing.
+    const fb = backendScore ? (e.feedback || backendScore.feedback) : (e.feedback ?? e.evaluation?.feedback);
+
     return {
       name: e.name ?? e.studentName ?? e.evaluation?.studentName,
       score,
       total: e.total,
-      maxTotal: e.maxTotal,
+      maxTotal,
       normalized: e.normalized,
       domScore: e.domScore,
       behaviorScore: e.behaviorScore,
@@ -406,6 +455,8 @@ function normalizeResults(ret) {
       behaviorBreakdown: e.behaviorBreakdown,
       codeBreakdown: e.codeBreakdown,
       visualBreakdown: e.visualBreakdown ?? (Array.isArray(fb?.breakdown) ? fb.breakdown : null),
+      rubricBreakdown: backendScore?.rubric_breakdown ?? null,
+      warnings: backendScore?.warnings ?? null,
       manualReviewDetail: e.manualReviewDetail,
       feedback: typeof fb === "object" ? (formatJsFeedback(fb) ?? fb.feedback ?? JSON.stringify(fb, null, 2)) : fb,
       aiFeedback: e.aiFeedback ?? e.evaluation?.aiFeedback,
@@ -430,9 +481,9 @@ function renderResult(ret) {
     }
 
     if (typeof it.score === "number") {
-      const pct = typeof it.normalized === "number" ? it.normalized
-        : (typeof it.maxTotal === "number" && it.maxTotal > 0 ? Math.round((it.score / it.maxTotal) * 1000) / 10 : null);
-      html += `<div class="score"><span class="big">${esc(it.score)}${it.maxTotal != null ? ` / ${esc(it.maxTotal)}` : ""}</span>${pct != null ? `<span class="pct">${pct}%</span>` : ""}</div>`;
+      const pct = round1(typeof it.normalized === "number" ? it.normalized
+        : (typeof it.maxTotal === "number" && it.maxTotal > 0 ? (it.score / it.maxTotal) * 100 : null));
+      html += `<div class="score"><span class="big">${esc(round1(it.score))}${it.maxTotal != null ? ` / ${esc(round1(it.maxTotal))}` : ""}</span>${pct != null ? `<span class="pct">${pct}%</span>` : ""}</div>`;
       if (pct != null) html += `<div class="bar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></div>`;
     }
 
@@ -440,11 +491,15 @@ function renderResult(ret) {
 
     if (Array.isArray(it.manualReviewDetail) && it.manualReviewDetail.length) {
       const points = it.pendingManualPoints != null ? it.pendingManualPoints : it.manualReviewDetail.reduce((s, m) => s + (m.weight || 0), 0);
-      html += `<div class="explain"><b>Needs manual review (${esc(points)} pts not auto-gradable):</b><ul style="margin:6px 0 0 18px;padding:0">` +
-        it.manualReviewDetail.map(m => `<li>${esc(m.description)} <span style="opacity:.7">(${esc(m.weight)} pts) — ${esc(m.reason)}</span></li>`).join("") +
+      html += `<div class="explain"><b>Needs manual review (${esc(round1(points))} pts not auto-gradable):</b><ul style="margin:6px 0 0 18px;padding:0">` +
+        it.manualReviewDetail.map(m => `<li>${esc(m.description)} <span style="opacity:.7">(${esc(round1(m.weight))} pts) — ${esc(m.reason)}</span></li>`).join("") +
         `</ul></div>`;
     } else if (Array.isArray(it.manualReviewItems) && it.manualReviewItems.length) {
       html += `<div class="explain"><b>Needs manual review:</b> ${esc(it.manualReviewItems.join(", "))}</div>`;
+    }
+    if (Array.isArray(it.warnings) && it.warnings.length) {
+      html += `<div class="explain"><b>Warnings:</b><ul style="margin:6px 0 0 18px;padding:0">` +
+        it.warnings.map(w => `<li>${esc(w)}</li>`).join("") + `</ul></div>`;
     }
     if (it.feedback) html += `<div class="feedback">${esc(it.feedback)}</div>`;
     if (it.aiFeedback && typeof it.aiFeedback === "string") {
@@ -487,6 +542,12 @@ function breakdownTable(it) {
     rows.push({ type: "Code", item: row.item, awarded: row.awarded, max: row.max, detail });
   });
 
+  // Backend evaluator: scoringService.js's rubric_breakdown ({ name,
+  // points_achieved, total_points }, one row per rubric criterion).
+  (it.rubricBreakdown || []).forEach(row => {
+    rows.push({ type: "Rubric", item: row.name, awarded: row.points_achieved, max: row.total_points, detail: "" });
+  });
+
   if (!rows.length) return "";
 
   return `<table class="breakdown" style="width:100%;border-collapse:collapse;margin:10px 0;font-size:13px">
@@ -497,7 +558,7 @@ function breakdownTable(it) {
     <tbody>${rows.map(r => `<tr style="border-top:1px solid var(--line)">
       <td style="padding:4px 8px 4px 0;opacity:.7">${esc(r.type)}</td>
       <td style="padding:4px 8px">${esc(r.item)}</td>
-      <td style="padding:4px 8px;white-space:nowrap">${esc(r.awarded)} / ${esc(r.max)}</td>
+      <td style="padding:4px 8px;white-space:nowrap">${esc(round1(r.awarded))} / ${esc(round1(r.max))}</td>
       <td style="padding:4px 0">${r.detail}</td>
     </tr>`).join("")}</tbody>
   </table>`;
