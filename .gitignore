@@ -1,20 +1,24 @@
-# secrets
-.env
-.env.local
-
-# deps
-node_modules
-
-# runtime logs
-logs/
+# Logs
+logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# evaluator runtime artifacts
-temp/
-evaluators/visual/screenshots/
-evaluators/visual/final_scores.json
+node_modules
+dist
+dist-ssr
+*.local
 
-# local test/screenshot output
-manual-test-output/
-
-DEPLOY.md
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
