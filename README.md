@@ -1,96 +1,16 @@
-# Central Evaluators Platform
+# React + Vite
 
-A distributed automated evaluation platform for assessing student submissions across multiple domains including Backend, React, Python, JavaScript, and Visual/UI assignments.
+This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
-Built using Node.js, BullMQ, Redis, E2B Sandboxes, Jest, Pytest, and Playwright.
+Currently, two official plugins are available:
 
----
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
 
-# Overview
+## React Compiler
 
-This platform is designed to process and evaluate coding submissions asynchronously using queue-based workers.
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-Each evaluator type has:
-- Dedicated queues
-- Dedicated workers
-- Isolated execution flow
-- Sandbox-based execution
-- Custom scoring system
-- AI-powered feedback generation
+## Expanding the Oxlint configuration
 
-The system supports scalable batch evaluations for colleges, bootcamps, and large-scale learning platforms.
-
----
-
-# Core Features
-
-- Multi-evaluator architecture
-- Queue-based asynchronous processing
-- Distributed workers
-- Secure sandbox execution
-- Repository-based evaluation
-- Automated scoring engine
-- AI-generated feedback
-- Multi-language support
-- Horizontal scalability
-- Concurrent evaluation handling
-
----
-
-# Tech Stack
-
-## Backend
-- Node.js
-- Express.js
-
-## Queue System
-- BullMQ
-- Redis
-
-## Sandbox
-- E2B Sandboxes
-
-## Testing Frameworks
-- Jest
-- Pytest
-- Playwright
-
-## AI Feedback
-- OpenAI / Groq APIs
-
----
-
-# Folder Structure
-
-```bash
-src/
-│
-├── controllers/
-│    └── evaluationController.js
-│
-├── routers/
-│    └── evaluationRouter.js
-│
-├── queues/
-│    ├── queueManager.js
-│    └── redis.js
-│
-├── workers/
-│    ├── pythonWorker.js
-│    ├── jsWorker.js
-│    ├── reactWorker.js
-│    ├── backendWorker.js
-│    └── visualWorker.js
-│
-├── evaluators/
-│    ├── backend/
-│    ├── react/
-│    ├── python/
-│    ├── javascript/
-│    └── visual/
-│
-├── server.js
-└── package.json
-```
-## Docs for System Architecture
-https://docs.google.com/document/d/1rF_IMoXXTm64bAWewCLNPOlHjmauFVcK_f547ZNAI1c/edit?usp=sharing
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
