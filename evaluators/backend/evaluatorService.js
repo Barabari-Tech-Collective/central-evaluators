@@ -17,8 +17,27 @@ export async function evaluateBackendProject(payload) {
     throw new Error("payload.rubric.criteria must be a non-empty array");
   }
 
+  // Defense in depth: evaluatorController.js validates this same shape
+  // before a job is ever queued, but a criterion missing/with a
+  // non-numeric weight silently turns the *entire* score NaN (`maxScore +=
+  // possiblePoints` in scoringService.js accumulates a running total), so
+  // this is worth checking again right at the worker boundary too, not
+  // just trusting every caller went through the HTTP controller.
+  for (const [i, criterion] of payload.rubric.criteria.entries()) {
+    if (!criterion || typeof criterion.name !== "string" || !criterion.name.trim()) {
+      throw new Error(`payload.rubric.criteria[${i}] is missing a string "name".`);
+    }
+    if (typeof criterion.weight !== "number" || !Number.isFinite(criterion.weight) || criterion.weight <= 0) {
+      throw new Error(`payload.rubric.criteria[${i}] ("${criterion.name}") must have a positive numeric "weight".`);
+    }
+  }
+
   // 1. Clone repo
-  const extractedPath = await extractSubmission(payload.repoUrl);
+  // `uploadPath` is what gets graded (may be a subfolder, for a GitHub
+  // "/tree/<branch>/<path>" URL — see extractService.js); `cleanupPath` is
+  // always the whole clone, so a subfolder submission doesn't leak the rest
+  // of the repo on disk.
+  const { uploadPath, cleanupPath } = await extractSubmission(payload.repoUrl);
 
   let sandbox;
 
@@ -29,7 +48,7 @@ export async function evaluateBackendProject(payload) {
     // billing/consuming quota indefinitely. Everything below now runs inside
     // this try so destroySandbox() always fires, mirroring how the
     // fullstack evaluator (evaluators/fullstack/evaluatorService.js) does it.
-    sandbox = await createSandbox(extractedPath);
+    sandbox = await createSandbox(uploadPath);
 
     // 3. Detect stack
     const language = await detectLanguage(sandbox);
@@ -90,6 +109,6 @@ export async function evaluateBackendProject(payload) {
     // ever removed on a clone *failure* (see extractService.js's catch
     // block) — every successful run leaked its checkout on the host disk.
     await destroySandbox(sandbox);
-    await fs.remove(extractedPath);
+    await fs.remove(cleanupPath);
   }
 }

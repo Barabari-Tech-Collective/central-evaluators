@@ -343,12 +343,79 @@ of crashing the job — verified directly and via the regression suite.
 
 ---
 
-## 8. Full feature/bug checklist (`scripts/test-js-evaluator.mjs`)
+## 8. Follow-up: wrong file graded in a multi-file repo
+
+Reported with a screenshot from the live UI: a real submission ("gayathri",
+multi-function mode, entry function `validateAge`) scored 10 with every
+issue line reading `validateAge is not defined` — repeated identically for
+every test case, which is the signature of "the function genuinely doesn't
+exist in whatever file got executed," not a logic bug in the student's code.
+
+Reproduced by rebuilding the same shape locally: a repo with more than one
+`.js` file, where the file `findJavaScriptFile` picked first alphabetically
+didn't contain the function being graded at all.
+
+| # | File | Issue |
+|---|------|-------|
+| 15 | `fileService.js` | 🔴 `findJavaScriptFile` (even after #6's node_modules/.git-skipping, deterministic-order fix) always returned the *first* `.js` file in sorted order — full stop, with no check that it actually contained anything relevant. Any repo with more than one `.js` file at the scanned level (a `README.js`-style stub, a config file, a second exercise) could silently grade the wrong one. `jsWorker.js` called `findJavaScriptFile(repoPath)` with no way to hint which function it was about to grade, so the file-picking step had no way to do better. |
+
+### Fix
+
+- `fileService.js`: `findJavaScriptFile(rootDir, requiredNames = [])` now
+  accepts the function name(s) the caller is about to grade. When given,
+  it prefers the first `.js` file (same deterministic scan order as
+  before) that actually *declares* one of those names as a top-level
+  function or variable — reusing the exact same AST parser
+  (`astService.js`) and export-stripping (`moduleSyntax.js`)
+  `evaluationService.js` already grades with, so "does this file declare
+  it" matches exactly what's gradable. Falls back to the old "just the
+  first `.js` file" behavior if no file matches, or if no names were given
+  at all (this is what keeps script mode — no discrete function name to
+  search for — working exactly as before).
+- A plain substring/regex search was tried first and rejected: it
+  false-matched a comment that merely *mentioned* the function's name
+  (`// TODO: call validateAge from here`) as if it were a real
+  declaration. The AST-based check only sees actual declarations, never
+  comments or strings, which is why it's used instead.
+- `jsWorker.js`: computes `requiredNames` from the job payload right
+  before calling `findJavaScriptFile` — every `functions[].name` in
+  multi-function mode, or `[entryFunction]` in function mode — and passes
+  it through.
+
+### Confirmed by running the code
+
+```
+Before fix (rebuilt the reported repo shape locally):
+  [FILE SERVICE] Found JS file: .../README.js
+  score: 10, passed: 0/2, issues: ["validateAge is not defined", "validateAge is not defined"]
+  -> CONFIRMED: exact match to the reported screenshot (score 10, repeated
+     identical "not defined" issue, "Significant improvements are required")
+
+After fix:
+  [FILE SERVICE] Found JS file (declares validateAge): .../index.js
+  score: 90, passed: 2/2, issues: []
+
+$ node scripts/test-js-evaluator.mjs
+✅ without a name hint, still falls back to the first .js file (old behavior preserved)
+✅ with a name hint, picks the file that actually declares it — not just the alphabetically-first one
+✅ end-to-end: correct multi-file submission now scores 2/2, not 0/2 with "not defined"
+✅ a comment merely mentioning the function name is not mistaken for a real declaration
+... (all prior checks still pass)
+All checks passed.
+
+$ npm run test:unit   # full suite
+(all ✅, exit code 0)
+```
+
+---
+
+## 9. Full feature/bug checklist (`scripts/test-js-evaluator.mjs`)
 
 Restructured the regression suite into labeled sections so running it
 prints a readable "what works / what doesn't" report, not just a flat list.
-Ran fresh for this write-up — 34/34 passing, plus the full `npm run
-test:unit` suite (58/58, including the visual evaluator's tests):
+Ran fresh for this write-up — 38/38 passing (34 plus 4 new checks for §8's
+multi-file file-discovery fix), plus the full `npm run test:unit` chain
+(all green, exit code 0):
 
 ```
 ## Basic functions
@@ -400,6 +467,10 @@ test:unit` suite (58/58, including the visual evaluator's tests):
 
 ## File discovery (fileService.js)
 ✅ skips node_modules/.git, finds the student's real file
+✅ without a name hint, still falls back to the first .js file (old behavior preserved)
+✅ with a name hint, picks the file that actually declares it — not just the alphabetically-first one
+✅ end-to-end: correct multi-file submission now scores 2/2, not 0/2 with "not defined"
+✅ a comment merely mentioning the function name is not mistaken for a real declaration
 
 ## Security: repo cloning
 ✅ malicious repoUrl is rejected before any shell command runs (no command injection)

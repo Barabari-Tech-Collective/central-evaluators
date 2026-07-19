@@ -67,6 +67,21 @@ function validateBackendPayload(payload) {
   if (!rubric || !Array.isArray(rubric.criteria) || rubric.criteria.length === 0) {
     throw new ValidationError('rubric.criteria must be a non-empty array');
   }
+
+  // Bug found during audit, confirmed by actually running evaluateResults():
+  // a criterion missing/with a non-numeric `weight` doesn't just score that
+  // one criterion wrong — `maxScore += possiblePoints` accumulates a
+  // running total, so one bad criterion turns the *entire* score NaN,
+  // silently, for every submission graded against that rubric. Reject it
+  // here instead of scoring every future submission as NaN.
+  rubric.criteria.forEach((criterion, i) => {
+    if (!criterion || typeof criterion.name !== 'string' || !criterion.name.trim()) {
+      throw new ValidationError(`rubric.criteria[${i}] is missing a string "name".`);
+    }
+    if (typeof criterion.weight !== 'number' || !Number.isFinite(criterion.weight) || criterion.weight <= 0) {
+      throw new ValidationError(`rubric.criteria[${i}] ("${criterion.name}") must have a positive numeric "weight".`);
+    }
+  });
 }
 
 export async function evaluate(req, res) {

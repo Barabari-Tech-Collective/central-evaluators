@@ -356,3 +356,152 @@ resource/timeout/validation posture up to the same level already
 established by the visual, JS, and fullstack evaluators elsewhere in this
 codebase — the remaining items in §5.2 are hardening on top of a now-solid
 baseline, not blockers.
+
+---
+
+## 6. Follow-up: GitHub folder-browser URLs always failed to clone
+
+Reported with a screenshot from the live UI: a repoUrl of
+`https://github.com/user/repo/tree/main/HTTP%20server/Assignment` always
+failed with the generic "We couldn't download the repository" message.
+
+That URL is GitHub's own web-UI link for *browsing a folder in a browser* —
+not a clonable repository URL. Confirmed directly:
+
+```
+$ git ls-remote "https://github.com/MalihaSiddiqa/Node-JS/tree/main/HTTP%20server/Assignment"
+fatal: repository '.../tree/main/HTTP%20server/Assignment/' not found
+
+$ git ls-remote "https://github.com/MalihaSiddiqa/Node-JS.git"
+262bf180310ff4df85fd4ee3b8b4eb4bbe768a9f	HEAD   # the actual repo clones fine
+```
+
+| # | File | Issue |
+|---|------|-------|
+| 12 | `extractService.js` | 🟡 `repoUrl` went straight into `git clone` with no handling for GitHub's `/tree/<branch>/<path>` URL shape. This is a very common real submission shape — a student's assignment lives in a subfolder of a larger class repo, and copying the URL from GitHub's folder-browser view (rather than hand-constructing the repo's actual clone URL) is the natural thing to do. The evaluator had no way to tell "this repo doesn't exist" apart from "this URL isn't actually a repo URL," so every such submission failed with a generic, unhelpful error regardless of whether the repo and folder were real and public (confirmed above: they were). |
+
+### Fix
+
+- `extractService.js`: added `parseGithubTreeUrl()`, which recognizes
+  `https://github.com/<owner>/<repo>/tree/<branch>[/<path>]` and extracts
+  the actual clonable repo URL, branch, and (URL-decoded) subfolder path.
+  `extractSubmission()` now clones the real repo at the referenced branch
+  and, when a subfolder was referenced, roots the evaluation there instead
+  of at the repo root — everything downstream (sandbox upload,
+  `detectLanguage`, the test runners) is unaffected, since they only ever
+  see whatever path `extractSubmission` hands back. A path-traversal guard
+  (`path.resolve` + containment check) rejects a subfolder path that would
+  resolve outside the freshly-cloned directory.
+- `extractSubmission()`'s return shape changed from a bare path string to
+  `{ uploadPath, cleanupPath }` — `uploadPath` is what gets graded (the
+  subfolder, when one was referenced); `cleanupPath` is always the
+  top-level clone. This split matters: without it, cleanup would only
+  remove the graded subfolder and silently leak the rest of the cloned
+  repo on disk every time — the same class of leak as bug #4, just
+  reintroduced through the new code path. `evaluatorService.js` was
+  updated to use both fields correctly (`createSandbox(uploadPath)`,
+  `fs.remove(cleanupPath)` in the `finally`).
+- Scoped to GitHub specifically (matches the reported case and this
+  evaluator's default host allowlist); GitLab (`/-/tree/<branch>/<path>`)
+  and Bitbucket (`/src/<branch>/<path>`) use different URL shapes and
+  weren't reported, so they weren't guessed at — flagged here as a
+  possible follow-up if the same complaint comes in for those hosts.
+
+### Confirmed by running the code
+
+```
+Before fix:
+  git clone "https://github.com/MalihaSiddiqa/Node-JS/tree/main/HTTP%20server/Assignment"
+  -> fatal: repository '.../tree/main/HTTP%20server/Assignment/' not found
+  -> surfaced to the user as "We couldn't download the repository."
+
+After fix (against the real, public repo from the report):
+  uploadPath:  .../submission-.../HTTP server/Assignment
+  uploadPath contents: [ 'index.html', 'script.js' ]        <- exactly what the rubric expects
+  cleanupPath: .../submission-...
+  cleanupPath contents (whole clone): [ '.git', 'File system Modules', 'HTTP server', 'README.md', 'node modules' ]
+  cleaned up OK                                              <- confirms the whole clone is removed, not just the subfolder
+
+$ node scripts/test-backend-evaluator.mjs
+✅ parseGithubTreeUrl: extracts a clonable repo URL from a folder-browser link
+✅ parseGithubTreeUrl: extracts the branch
+✅ parseGithubTreeUrl: URL-decodes and rejoins the subfolder path
+✅ parseGithubTreeUrl: a tree URL with no subfolder (branch only) has subPath=null
+✅ parseGithubTreeUrl: a plain repo URL (no /tree/) is not treated as a tree URL
+✅ parseGithubTreeUrl: a non-GitHub host is not treated as a tree URL
+✅ parseGithubTreeUrl: a path-traversal subPath is preserved as-is, not normalized away
+... (all prior checks still pass)
+65/65 passed.
+
+$ npm run test:unit   # full suite
+(all ✅, exit code 0)
+```
+
+---
+
+## 7. Follow-up: full step-by-step re-audit
+
+A second pass through every file, this time specifically hunting for
+edge cases rather than re-reading for wiring bugs — each hypothesis below
+was tested empirically (real jest/pytest/npm runs against reproduced
+student config shapes, or a fake-sandbox unit test), not just reasoned
+about, since two hypotheses from this pass (ESM `"type": "module"`
+projects breaking the injected Jest test; a student's `testpaths` in
+`pytest.ini` excluding the injected file) turned out to already work fine
+and would have been wasted/risky "fixes" for a non-problem.
+
+| # | File | Issue | Verified how |
+|---|------|-------|---|
+| 13 | `runners/jestRunner.js` | 🔴 A student's own `jest.config.js` can silently discard real results instead of failing cleanly. `bail: 1` (or any truthy `bail`): confirmed all 3 tests in `evaluator.test.js` actually ran ("1 failed, 2 passed, 3 total" in the console) but jest never wrote `--outputFile` at all — every one of those real results was lost, and the submission would score as "0 tests ran" via the existing #6 fallback, discarding real signal rather than just failing gracefully. A `reporters` entry pointing at a missing/broken module fails config validation before any test runs. A restrictive `testMatch`/`testPathIgnorePatterns` silently collects zero tests even though `evaluator.test.js` was named explicitly on the CLI. | Built each config shape locally with a real `npm install jest` and ran the exact command `jestRunner.js` issues; confirmed the missing-output-file and zero-tests-collected outcomes directly. |
+| 14 | `runners/pytestRunner.js` | 🔴 A student's `pytest.ini`/`pyproject.toml`/`setup.cfg` can set `addopts = -x` (stop after first failure). With 3 generated tests where the first fails, pytest stopped immediately — the JSON report showed `{"total": 1, "collected": 3}`: 2 real tests never ran, and `normalizePytestResults` reads `summary.total` (1) as `totalTests`, silently scoring on a third of the actual signal with no warning that anything was cut short. | Built the same shape locally with real `pytest`/`pytest-json-report`; confirmed `collected` (3) vs `total` (1) diverging in the actual JSON output. |
+| 15 | `sandboxService.js` | 🟡 `sandbox.files.uploadDir()` uploaded the cloned repo completely unfiltered — a student who committed `node_modules` (common before learning `.gitignore`) or a Python virtualenv would upload potentially thousands of files, wasting E2B time/quota and risking the job timeout before grading even starts. `evaluators/react/sandboxService.js` already solves the equivalent problem for the React evaluator; this evaluator had no equivalent (documented as a known gap in §5.2 of this doc, left unfixed until this pass). | Read `evaluators/react/sandboxService.js`'s existing, already-tested `IGNORE_DIRS`/`MAX_FILE_SIZE`/symlink-skip pattern; reimplemented the equivalent here (not imported directly — that file is under separate active development in this repo right now) with Python-specific additions (`__pycache__`, `venv`, `.pytest_cache`, etc.), then verified with a fake-sandbox unit test. |
+| 16 | `sandboxService.js` | 🟡 A side effect of fixing #15: once upload does real file I/O (`fs.stat`/`fs.readFile` per file, where before it was one opaque `uploadDir()` call), an upload failure partway through would throw *before* `createSandbox()` returns a sandbox reference — `evaluatorService.js`'s `let sandbox;` would stay `undefined`, so its own `finally`-block `destroySandbox(sandbox)` can never reach the sandbox that *was* already created and billing. | Traced the control flow: `createSandbox()` throwing before `return sandbox` means the caller's `sandbox` variable is never assigned, so its cleanup call is a no-op (`destroySandbox` checks `if (sandbox)`). |
+| 17 | `controller/evaluatorController.js`, `evaluatorService.js` | 🔴 Rubric validation checked that `criteria` was a non-empty array, but never validated *each* criterion. A criterion missing `weight` (or with a non-numeric one) doesn't just misscore that one criterion — `scoringService.js`'s `maxScore += possiblePoints` accumulates a running total across all criteria, so **one bad criterion turns the entire score `NaN`** for every submission graded against that rubric, silently. | Called `evaluateResults()` directly with a rubric missing one criterion's `weight`: got `score: NaN, maxScore: NaN` back, confirming the propagation. |
+
+### Fix
+
+- `runners/jestRunner.js`: added `--config '{}'` to the `npx jest` invocation — makes jest ignore the student's `jest.config.js` entirely and grade with plain defaults. Confirmed this single change fixes all three jest issues above (bail, broken reporters, restrictive testMatch) at once. Safe specifically because the injected test never `require`s/`import`s the student's source — it only ever talks to their server over HTTP after spawning it as a real `node <entry>` subprocess (which correctly uses the student's own config on its own), so none of *their* jest config was ever actually needed to grade them.
+- `runners/pytestRunner.js`: added `-o addopts=""` to the `pytest` invocation — clears any `addopts` a config file would otherwise inject, so `-x`/`--maxfail`/etc. from the student's own config can't truncate the generated test run.
+- `sandboxService.js`: replaced the single unfiltered `uploadDir()` call with a recursive uploader that skips `node_modules`/`.git`/build-output dirs/Python virtualenv-and-cache dirs, skips files over 10MB, and skips symlinks (mirroring `evaluators/react/sandboxService.js`'s already-proven pattern) — and kills the sandbox instead of leaking it if the upload itself throws partway through.
+- `controller/evaluatorController.js` (`validateBackendPayload`) and `evaluatorService.js` (defense in depth, in case a job ever reaches the worker without going through the HTTP controller): both now validate every `rubric.criteria[i]` has a non-empty string `name` and a positive finite numeric `weight`, rejecting the request/job before it can silently NaN every future score.
+
+### Confirmed by running the code
+
+```
+$ node scripts/test-backend-evaluator.mjs
+✅ jestRunner: overrides a student's jest.config.js via --config '{}'
+✅ pytestRunner: clears a student's config-file addopts via -o addopts=""
+✅ uploadDirectory: uploads the real source file
+✅ uploadDirectory: skips node_modules / __pycache__ / venv contents
+✅ uploadDirectory: skips a file over the 10MB limit
+✅ uploadDirectory: skips a broken symlink instead of throwing
+✅ evaluatorController: rubric criterion missing weight -> 400 (would otherwise NaN the whole score)
+✅ evaluatorController: rubric criterion with a non-numeric weight -> 400
+✅ evaluatorController: rubric criterion missing name -> 400
+✅ evaluateBackendProject: rubric criterion missing weight is rejected before scoring (not silently NaN)
+... (all prior checks still pass)
+77/77 passed.
+
+$ npm run test:unit   # full suite
+(all ✅, exit code 0)
+```
+
+### Hypotheses tested and found to already work correctly (no fix needed)
+
+Worth recording so they aren't re-investigated later — each was tested with
+a real local `npm install jest`/`pytest` run against the reproduced shape,
+not just reasoned about:
+
+- **ESM (`"type": "module"`) student projects breaking the injected Jest
+  test file.** Suspected the injected test file's `require('child_process')`
+  etc. would throw under a project declaring `"type": "module"`. Actually
+  fine: Jest's default transform treats `.js` test files as CommonJS
+  regardless of the project's `"type"` field, and the injected test never
+  requires the student's own source anyway — it spawns their server as a
+  real subprocess, where Node's native ESM loader applies correctly on its
+  own.
+- **A student's `pytest.ini` `testpaths` restricting collection.**
+  Suspected `testpaths = tests` would prevent `test_evaluator.py` (at the
+  repo root) from being collected. Actually fine: an explicit file argument
+  on the pytest CLI (`pytest test_evaluator.py`) overrides `testpaths` —
+  confirmed the injected file still collects and runs regardless.
