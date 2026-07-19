@@ -32,7 +32,15 @@ export async function initializeJsWorker() {
 
           repoPath = await cloneRepo(submission.repoUrl);
 
-          const filePath = findJavaScriptFile(repoPath);
+          // Tell findJavaScriptFile which function name(s) we're about to
+          // grade so it can pick the .js file that actually defines them,
+          // instead of just the first one alphabetically (see fileService.js).
+          const mode = evaluationMode || 'function';
+          const requiredNames = mode === 'multi-function'
+            ? (functions || []).map(fn => fn && fn.name).filter(Boolean)
+            : (entryFunction ? [entryFunction] : []);
+
+          const filePath = findJavaScriptFile(repoPath, requiredNames);
 
           // Author: Arma Sahar
           // Bug (jsBugs.md #9): this early-return used to have a different

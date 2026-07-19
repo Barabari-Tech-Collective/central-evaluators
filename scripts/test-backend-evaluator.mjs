@@ -19,12 +19,18 @@
  *
  * Run: node scripts/test-backend-evaluator.mjs   (exit 0 = all fixed)
  */
+import path from "path";
 import { evaluateResults } from "../evaluators/backend/scoringService.js";
 import { normalizeJestResults, normalizePytestResults } from "../evaluators/backend/utils/normalizeResults.js";
 import getAiFeedback from "../evaluators/backend/feedbackService.js";
 import { generateTestFileContent, injectEvaluatorTests } from "../evaluators/backend/injectors/testInjector.js";
 import { injectPythonTests } from "../evaluators/backend/injectors/pyTestInjector.js";
-import extractSubmission from "../evaluators/backend/extractService.js";
+import extractSubmission, { parseGithubTreeUrl } from "../evaluators/backend/extractService.js";
+import { uploadDirectory } from "../evaluators/backend/sandboxService.js";
+import runJestEvaluation from "../evaluators/backend/runners/jestRunner.js";
+import runPytestEvaluation from "../evaluators/backend/runners/pytestRunner.js";
+import fs from "fs";
+import os from "os";
 import { evaluate } from "../controller/evaluatorController.js";
 import detectLanguage from "../evaluators/backend/utils/detectLanguage.js";
 import { withTimeout } from "../evaluators/react/utils/timeout.js";
@@ -272,6 +278,164 @@ section("BUG REGRESSION — #7 extractSubmission SSRF guard");
   );
 }
 
+section("EDGE CASE — sandboxService.uploadDirectory skips heavy/irrelevant paths");
+{
+  // Bug/edge case found during audit: uploadDir() had no filtering at all —
+  // a committed node_modules or Python venv would upload thousands of files
+  // to the sandbox for no benefit. Verified against a fake sandbox stub
+  // (same convention as evaluators/react's own upload tests) so no real E2B
+  // sandbox is needed.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "backend-eval-upload-"));
+  fs.mkdirSync(path.join(root, "node_modules", "some-dep"), { recursive: true });
+  fs.writeFileSync(path.join(root, "node_modules", "some-dep", "index.js"), "// dependency");
+  fs.mkdirSync(path.join(root, "__pycache__"), { recursive: true });
+  fs.writeFileSync(path.join(root, "__pycache__", "app.cpython-311.pyc"), "compiled bytecode");
+  fs.mkdirSync(path.join(root, "venv", "lib"), { recursive: true });
+  fs.writeFileSync(path.join(root, "venv", "lib", "site.py"), "# venv internals");
+  fs.writeFileSync(path.join(root, "big.bin"), Buffer.alloc(11 * 1024 * 1024)); // > 10MB
+  fs.writeFileSync(path.join(root, "app.js"), "console.log('hello');");
+  if (process.platform !== "win32") {
+    fs.symlinkSync(path.join(root, "does-not-exist"), path.join(root, "broken-link.js"));
+  }
+
+  const uploaded = {};
+  const fakeSandbox = {
+    commands: { run: async () => ({ stdout: "" }) },
+    files: { write: async (remotePath, content) => { uploaded[remotePath] = content; } }
+  };
+
+  await uploadDirectory(fakeSandbox, root, "/home/user/app");
+  const uploadedPaths = Object.keys(uploaded);
+
+  check(
+    "uploadDirectory: uploads the real source file",
+    uploadedPaths.includes("/home/user/app/app.js")
+  );
+  check(
+    "uploadDirectory: skips node_modules contents",
+    !uploadedPaths.some(p => p.includes("node_modules"))
+  );
+  check(
+    "uploadDirectory: skips __pycache__ contents",
+    !uploadedPaths.some(p => p.includes("__pycache__"))
+  );
+  check(
+    "uploadDirectory: skips venv contents",
+    !uploadedPaths.some(p => p.includes("/venv/"))
+  );
+  check(
+    "uploadDirectory: skips a file over the 10MB limit",
+    !uploadedPaths.includes("/home/user/app/big.bin")
+  );
+  if (process.platform !== "win32") {
+    check(
+      "uploadDirectory: skips a broken symlink instead of throwing",
+      !uploadedPaths.includes("/home/user/app/broken-link.js")
+    );
+  }
+
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+section("EDGE CASE — jest/pytest runners defend against a student's own test-runner config");
+{
+  // Bug found during audit, confirmed by actually running jest/pytest
+  // against reproduced student config shapes (see backendBugs.md):
+  //   - jest: a student's jest.config.js with `bail: 1` let all tests run
+  //     but silently skipped writing the --outputFile entirely; a broken
+  //     custom `reporters` entry crashed config load before anything ran;
+  //     a restrictive `testMatch` silently collected zero tests.
+  //   - pytest: a student's pytest.ini with `addopts = -x` stopped after
+  //     the first failure — 2 of 3 real tests never ran, and the JSON
+  //     report's "total" silently read as 1 instead of 3, with no warning.
+  // Verified here that the actual shell commands the runners issue include
+  // the overrides that fix all of the above (`--config '{}'` for jest,
+  // `-o addopts=""` for pytest) — a fake sandbox stub just records the
+  // command strings, no real jest/pytest/E2B needed.
+  function fakeRunnerSandbox(outputFileMarker, outputJson) {
+    const capturedCommands = [];
+    return {
+      capturedCommands,
+      commands: {
+        run: async (cmd) => {
+          capturedCommands.push(cmd);
+          if (cmd.includes("package.json")) {
+            return { stdout: JSON.stringify({ dependencies: { jest: "^29", supertest: "^6" } }) };
+          }
+          if (cmd.includes(outputFileMarker)) {
+            return { stdout: JSON.stringify(outputJson) };
+          }
+          return { stdout: "" };
+        }
+      },
+      files: { write: async () => {} }
+    };
+  }
+
+  const jestSandbox = fakeRunnerSandbox("jest-results.json", { numPassedTests: 1, numTotalTests: 1, testResults: [] });
+  await runJestEvaluation(jestSandbox, "/home/user/app", rubric);
+  const jestCmd = jestSandbox.capturedCommands.find(c => c.includes("npx jest"));
+  check(
+    "jestRunner: overrides a student's jest.config.js via --config '{}'",
+    !!jestCmd && jestCmd.includes("--config '{}'")
+  );
+
+  const pytestSandbox = fakeRunnerSandbox("pytest-results.json", { summary: { total: 1, passed: 1 }, tests: [] });
+  await runPytestEvaluation(pytestSandbox, "/home/user/app", rubric);
+  const pytestCmd = pytestSandbox.capturedCommands.find(c => c.includes("pytest test_evaluator.py"));
+  check(
+    "pytestRunner: clears a student's config-file addopts via -o addopts=\"\"",
+    !!pytestCmd && pytestCmd.includes('-o addopts=""')
+  );
+}
+
+section("BUG REGRESSION — GitHub folder-browser URL support (parseGithubTreeUrl)");
+{
+  // Reported with a screenshot: a repoUrl copied from GitHub's own "browse
+  // this folder" web UI (not a clonable repo URL) always failed with a
+  // generic "couldn't download the repository" error, even though the
+  // referenced repo + subfolder were real and public. Confirmed with
+  // `git ls-remote` that the tree URL itself isn't clonable, but stripping
+  // the /tree/<branch>/<path> suffix produces a URL that is.
+  const parsed = parseGithubTreeUrl("https://github.com/MalihaSiddiqa/Node-JS/tree/main/HTTP%20server/Assignment");
+  check(
+    "parseGithubTreeUrl: extracts a clonable repo URL from a folder-browser link",
+    parsed?.cloneUrl === "https://github.com/MalihaSiddiqa/Node-JS.git"
+  );
+  check("parseGithubTreeUrl: extracts the branch", parsed?.branch === "main");
+  check(
+    "parseGithubTreeUrl: URL-decodes and rejoins the subfolder path",
+    parsed?.subPath === path.join("HTTP server", "Assignment"),
+    `subPath=${parsed?.subPath}`
+  );
+
+  const branchOnly = parseGithubTreeUrl("https://github.com/user/repo/tree/develop");
+  check(
+    "parseGithubTreeUrl: a tree URL with no subfolder (branch only) has subPath=null",
+    branchOnly?.cloneUrl === "https://github.com/user/repo.git" && branchOnly.branch === "develop" && branchOnly.subPath === null
+  );
+
+  check(
+    "parseGithubTreeUrl: a plain repo URL (no /tree/) is not treated as a tree URL",
+    parseGithubTreeUrl("https://github.com/user/repo.git") === null
+  );
+  check(
+    "parseGithubTreeUrl: a non-GitHub host is not treated as a tree URL",
+    parseGithubTreeUrl("https://gitlab.com/user/repo/tree/main/sub") === null
+  );
+
+  // A malicious/malformed subPath must round-trip faithfully through the
+  // parser (not silently normalized) so the containment check in
+  // extractSubmission (path.resolve + startsWith) actually gets to see it
+  // and reject it.
+  const traversal = parseGithubTreeUrl("https://github.com/user/repo/tree/main/../../etc/passwd");
+  check(
+    "parseGithubTreeUrl: a path-traversal subPath is preserved as-is, not normalized away",
+    traversal?.subPath === path.join("..", "..", "etc", "passwd"),
+    `subPath=${traversal?.subPath}`
+  );
+}
+
 section("BUG REGRESSION — #8 evaluatorController fail-fast validation");
 {
   function fakeRes() {
@@ -305,6 +469,56 @@ section("BUG REGRESSION — #8 evaluatorController fail-fast validation");
     "evaluatorController: backend payload with disallowed host -> 400",
     badHost.statusCode === 400,
     `got ${badHost.statusCode}`
+  );
+
+  // Edge case found during audit: a criterion missing/with a non-numeric
+  // weight doesn't just misscore that one criterion — evaluateResults()'s
+  // `maxScore += possiblePoints` turns the *entire* score NaN. Reject it
+  // before it's ever queued.
+  const missingWeight = fakeRes();
+  await evaluate({
+    body: { type: "backend", repoUrl: "https://github.com/octocat/Hello-World.git", rubric: { criteria: [{ name: "Auth works" }, { name: "Endpoints", weight: 50 }] } }
+  }, missingWeight);
+  check(
+    "evaluatorController: rubric criterion missing weight -> 400 (would otherwise NaN the whole score)",
+    missingWeight.statusCode === 400,
+    `got ${missingWeight.statusCode}, body=${JSON.stringify(missingWeight.body)}`
+  );
+
+  const badWeightType = fakeRes();
+  await evaluate({
+    body: { type: "backend", repoUrl: "https://github.com/octocat/Hello-World.git", rubric: { criteria: [{ name: "Auth works", weight: "forty" }] } }
+  }, badWeightType);
+  check(
+    "evaluatorController: rubric criterion with a non-numeric weight -> 400",
+    badWeightType.statusCode === 400,
+    `got ${badWeightType.statusCode}`
+  );
+
+  const missingName = fakeRes();
+  await evaluate({
+    body: { type: "backend", repoUrl: "https://github.com/octocat/Hello-World.git", rubric: { criteria: [{ weight: 100 }] } }
+  }, missingName);
+  check(
+    "evaluatorController: rubric criterion missing name -> 400",
+    missingName.statusCode === 400,
+    `got ${missingName.statusCode}`
+  );
+}
+
+section("EDGE CASE — evaluatorService.js rejects a malformed rubric too (defense in depth)");
+{
+  async function rejects(fn) {
+    try { await fn(); return false; } catch { return true; }
+  }
+  const { evaluateBackendProject } = await import("../evaluators/backend/evaluatorService.js");
+
+  check(
+    "evaluateBackendProject: rubric criterion missing weight is rejected before scoring (not silently NaN)",
+    await rejects(() => evaluateBackendProject({
+      repoUrl: "https://github.com/x/y.git",
+      rubric: { criteria: [{ name: "Auth works" }] }
+    }))
   );
 }
 

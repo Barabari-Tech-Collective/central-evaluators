@@ -267,6 +267,74 @@ begin("File discovery (fileService.js)");
   fs.rmSync(root, { recursive: true, force: true });
 }
 
+// Real submission: a repo with multiple .js files where the entry function
+// lived in a file that didn't sort first alphabetically ("README.js" <
+// "index.js") — every test case failed with "validateAge is not defined"
+// even though the function was implemented correctly, because the old
+// findJavaScriptFile always graded whichever .js file sorted first,
+// regardless of whether it actually contained the function being graded.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "js-eval-multifile-"));
+  fs.writeFileSync(path.join(root, "README.js"), '// entry point wiring, doesn\'t define validateAge\nconsole.log("app started");');
+  fs.writeFileSync(path.join(root, "index.js"), `
+    function validateAge(age) {
+      if (typeof age === "number" && age > 0) return "Thank you! Your age is: " + age;
+      return "Error: Invalid age entered";
+    }
+  `);
+
+  const withoutHint = findJavaScriptFile(root);
+  check(
+    "without a name hint, still falls back to the first .js file (old behavior preserved)",
+    withoutHint === path.join(root, "README.js"),
+    `found=${withoutHint}`
+  );
+
+  const withHint = findJavaScriptFile(root, ["validateAge"]);
+  check(
+    "with a name hint, picks the file that actually declares it — not just the alphabetically-first one",
+    withHint === path.join(root, "index.js"),
+    `found=${withHint}`
+  );
+
+  const result = await evaluateStudent({
+    filePath: withHint,
+    evaluationMode: "multi-function",
+    functions: [{
+      name: "validateAge",
+      testCases: [
+        { input: 25, expected: "Thank you! Your age is: 25" },
+        { input: "25years", expected: "Error: Invalid age entered" }
+      ]
+    }]
+  });
+  check(
+    "end-to-end: correct multi-file submission now scores 2/2, not 0/2 with \"not defined\"",
+    result.passed === 2 && result.total === 2,
+    `passed=${result.passed}/${result.total} issues=${JSON.stringify(result.feedback.issues)}`
+  );
+
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+// A file that only *mentions* the function name in a comment must not be
+// mistaken for one that declares it — this is why the fix parses the AST
+// (astService.js) instead of doing a plain text/regex search.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "js-eval-comment-decoy-"));
+  fs.writeFileSync(path.join(root, "app.js"), '// TODO: call validateAge from here once it exists\nconsole.log("stub");');
+  fs.writeFileSync(path.join(root, "index.js"), "function validateAge(age) { return age > 0; }");
+
+  const found = findJavaScriptFile(root, ["validateAge"]);
+  check(
+    "a comment merely mentioning the function name is not mistaken for a real declaration",
+    found === path.join(root, "index.js"),
+    `found=${found}`
+  );
+
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
 // =============================================================================
 begin("Security: repo cloning");
 // =============================================================================

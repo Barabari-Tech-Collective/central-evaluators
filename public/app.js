@@ -80,6 +80,26 @@ const EVALUATORS = {
         ph: '[{"name":"Authentication works","weight":40},{"name":"All API endpoints work","weight":30},{"name":"Performance","weight":30}]'
       }
     ]
+  },
+  // Author: Arma Sahar — enabling the React evaluator now that
+  // evaluators/react/* is fixed (see REACT_EVALUATOR_AUDIT.md). Same
+  // request shape as backend: one repoUrl + rubric per job, no `submissions`
+  // fan-out (evaluationRouter.js only fans out javascript/visual). Rubric
+  // criterion names must match scoringService.js's CRITERIA_KEY_MAP
+  // (components/props/state/routing/api/code structure) — the placeholder
+  // below uses names that are all pre-mapped so the form works out of the box.
+  react: {
+    emoji: "⚛️", name: "React",
+    desc: "Boot the app in a real sandbox, drive it with a real browser",
+    blurb: "Best for Vite/CRA React apps with a working build script. The app is installed, built, and served inside an isolated E2B sandbox, then checked with Playwright (rendering, props, state, routing, API calls) and an AI code-structure review.",
+    fields: [
+      { key: "repoUrl", label: "Repository URL", sub: "the student's React app to clone, build, and run", type: "url", required: true, ph: "https://github.com/user/repo.git" },
+      { key: "branch", label: "Branch", sub: "optional — defaults to the repo's default branch", ph: "main" },
+      {
+        key: "rubricCriteria", label: "Rubric criteria", sub: "JSON array of { name, weight } — names: components, props, state, routing, api, code structure", type: "textarea", required: true,
+        ph: '[{"name":"Components render correctly","weight":20},{"name":"Props handling","weight":20},{"name":"State updates","weight":20},{"name":"Routing works","weight":20},{"name":"API integration","weight":10},{"name":"Code structure","weight":10}]'
+      }
+    ]
   }
 };
 
@@ -426,6 +446,17 @@ function isBackendScoreShape(s) {
   return s && typeof s === "object" && typeof s.score === "number" && typeof s.maxScore === "number";
 }
 
+// Author: Arma Sahar — the React evaluator's scoringService.js returns
+// `rubric_breakdown` as a flat { criterionName: pointsAwarded } object (one
+// entry per rubric criterion), not an array of { name, points_achieved,
+// total_points } like the backend evaluator. There's no per-criterion max in
+// this shape (only the overall `maxScore`), so the breakdown table shows
+// awarded points without a "/max" column for these rows — showing a
+// fabricated max would be worse than omitting it.
+function isFlatRubricBreakdown(rb) {
+  return rb && typeof rb === "object" && !Array.isArray(rb);
+}
+
 function normalizeResults(ret) {
   if (!ret) return [];
   let list = ret.result ?? ret.results ?? ret;
@@ -434,7 +465,8 @@ function normalizeResults(ret) {
     const backendScore = isBackendScoreShape(e.score) ? e.score : null;
 
     const score = backendScore ? backendScore.score : (e.score ?? e.total ?? e.evaluation?.score ?? e.evaluation?.total);
-    const maxTotal = backendScore ? backendScore.maxScore : e.maxTotal;
+    // React evaluator uses `maxScore`, not `maxTotal` — fall back to it.
+    const maxTotal = backendScore ? backendScore.maxScore : (e.maxTotal ?? e.maxScore);
     // Prefer the real AI-generated feedback string (top-level `feedback`
     // from evaluatorService.js/feedbackService.js); fall back to
     // scoringService.js's canned pass/fail summary if that's missing.
@@ -456,12 +488,15 @@ function normalizeResults(ret) {
       codeBreakdown: e.codeBreakdown,
       visualBreakdown: e.visualBreakdown ?? (Array.isArray(fb?.breakdown) ? fb.breakdown : null),
       rubricBreakdown: backendScore?.rubric_breakdown ?? null,
-      warnings: backendScore?.warnings ?? null,
+      flatRubricBreakdown: isFlatRubricBreakdown(e.rubric_breakdown) ? e.rubric_breakdown : null,
+      warnings: backendScore?.warnings ?? e.warnings ?? null,
       manualReviewDetail: e.manualReviewDetail,
       feedback: typeof fb === "object" ? (formatJsFeedback(fb) ?? fb.feedback ?? JSON.stringify(fb, null, 2)) : fb,
       aiFeedback: e.aiFeedback ?? e.evaluation?.aiFeedback,
       error: e.error ?? e.evaluation?.error,
       manualReviewItems: e.manualReviewItems,
+      status: typeof e.status === "string" ? e.status : null,
+      executionLogs: e.execution_logs ?? null,
       raw: e
     };
   });
@@ -486,6 +521,11 @@ function renderResult(ret) {
       html += `<div class="score"><span class="big">${esc(round1(it.score))}${it.maxTotal != null ? ` / ${esc(round1(it.maxTotal))}` : ""}</span>${pct != null ? `<span class="pct">${pct}%</span>` : ""}</div>`;
       if (pct != null) html += `<div class="bar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></div>`;
     }
+    // React evaluator's status field ("pass"/"fail") — cheap, generic badge;
+    // no other evaluator currently sets this key so it can't collide.
+    if (it.status === "pass" || it.status === "fail") {
+      html += `<div class="chip ${it.status === "pass" ? "completed" : "failed"}" style="display:inline-block;margin:4px 0 8px">${it.status === "pass" ? "✅ Pass" : "❌ Fail"}</div>`;
+    }
 
     html += breakdownTable(it);
 
@@ -504,6 +544,11 @@ function renderResult(ret) {
     if (it.feedback) html += `<div class="feedback">${esc(it.feedback)}</div>`;
     if (it.aiFeedback && typeof it.aiFeedback === "string") {
       html += `<div class="feedback"><b>AI mentor feedback:</b><br>${esc(it.aiFeedback)}</div>`;
+    }
+    // React evaluator: install/build/Playwright logs — useful for debugging
+    // why a build failed or a check didn't pass, kept collapsed by default.
+    if (it.executionLogs) {
+      html += `<details><summary>Build &amp; test logs</summary><pre class="raw">${esc(it.executionLogs)}</pre></details>`;
     }
 
     html += rawBlock(it.raw);
@@ -548,6 +593,17 @@ function breakdownTable(it) {
     rows.push({ type: "Rubric", item: row.name, awarded: row.points_achieved, max: row.total_points, detail: "" });
   });
 
+  // React evaluator: scoringService.js's rubric_breakdown is a flat
+  // { criterionName: pointsAwarded } object — no per-criterion max is
+  // available in this shape (only the overall maxScore, shown above in the
+  // score bar), so `max` is left undefined and the Points cell just shows
+  // the awarded value rather than a fabricated "/max".
+  if (it.flatRubricBreakdown) {
+    Object.entries(it.flatRubricBreakdown).forEach(([name, awarded]) => {
+      rows.push({ type: "Rubric", item: name, awarded, max: undefined, detail: "" });
+    });
+  }
+
   if (!rows.length) return "";
 
   return `<table class="breakdown" style="width:100%;border-collapse:collapse;margin:10px 0;font-size:13px">
@@ -558,7 +614,7 @@ function breakdownTable(it) {
     <tbody>${rows.map(r => `<tr style="border-top:1px solid var(--line)">
       <td style="padding:4px 8px 4px 0;opacity:.7">${esc(r.type)}</td>
       <td style="padding:4px 8px">${esc(r.item)}</td>
-      <td style="padding:4px 8px;white-space:nowrap">${esc(round1(r.awarded))} / ${esc(round1(r.max))}</td>
+      <td style="padding:4px 8px;white-space:nowrap">${esc(round1(r.awarded))}${r.max != null ? ` / ${esc(round1(r.max))}` : ""}</td>
       <td style="padding:4px 0">${r.detail}</td>
     </tr>`).join("")}</tbody>
   </table>`;

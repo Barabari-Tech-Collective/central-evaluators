@@ -29,9 +29,25 @@ export default async function runPytestEvaluation(
 
   const outputFile = "/home/user/pytest-results.json";
 
+  // Author: Arma Sahar
+  // Bug: found while auditing for edge cases, confirmed by actually running
+  // pytest against a reproduced student config. A student's own
+  // pytest.ini/pyproject.toml/setup.cfg can set `addopts = -x` (stop after
+  // first failure) — confirmed: with 3 tests where the first fails, pytest
+  // stopped immediately and the JSON report showed `{"total": 1,
+  // "collected": 3}` — 2 real tests never ran, and totalTests silently read
+  // as 1 instead of 3, scoring the submission on a third of the actual
+  // signal with no warning. `-o addopts=""` clears any addopts a config
+  // file would otherwise inject for this invocation (confirmed: same repro
+  // now reports "total": 3 as expected) — the equivalent of jestRunner.js's
+  // `--config '{}'` for the one pytest option shown to actually cause this.
+  // (Unlike jest, an explicit `test_evaluator.py` argument already
+  // overrides a config-file `testpaths` restriction on its own — confirmed
+  // separately — so that particular risk doesn't need a matching override.)
   await sandbox.commands.run(`
     cd ${projectPath} &&
     pytest test_evaluator.py \
+    -o addopts="" \
     --json-report \
     --json-report-file=${outputFile} || true
   `, {

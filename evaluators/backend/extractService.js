@@ -9,18 +9,60 @@ const TMP_ROOT = path.join(os.tmpdir(), "backend-evaluator");
 
 await fs.ensureDir(TMP_ROOT);
 
+// Author: Arma Sahar
+// Bug: reported with a screenshot from the live UI — a repoUrl like
+// "https://github.com/user/repo/tree/main/HTTP%20server/Assignment" always
+// failed with a generic "couldn't download the repository" error. That's
+// GitHub's own web-UI URL for *browsing a folder in a browser* — the format
+// `git clone` understands is "https://github.com/user/repo.git" (confirmed:
+// `git ls-remote` on the tree URL fails with "repository not found", the
+// same URL with the /tree/... suffix stripped clones fine). This is a very
+// common real submission shape: a student's assignment lives in a subfolder
+// of a larger class repo, and copying the URL from GitHub's folder view
+// (rather than constructing the repo's clone URL by hand) is the natural
+// thing to do. Fix: detect this specific GitHub shape, clone the actual
+// repo at the referenced branch, and root the evaluation at the referenced
+// subfolder instead of the repo root — everything downstream (sandbox
+// upload, detectLanguage, the test runners) is unaffected, since they only
+// ever see whatever path extractSubmission returns.
+const GITHUB_TREE_URL_RE = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.*))?\/?$/i;
+
+export function parseGithubTreeUrl(url) {
+  const m = GITHUB_TREE_URL_RE.exec(url.trim());
+  if (!m) return null;
+
+  const [, owner, repo, branch, rawPath] = m;
+  return {
+    cloneUrl: `https://github.com/${owner}/${repo.replace(/\.git$/i, "")}.git`,
+    branch: decodeURIComponent(branch),
+    subPath: rawPath
+      ? rawPath.split("/").map(decodeURIComponent).join(path.sep)
+      : null
+  };
+}
+
+// Returns { uploadPath, cleanupPath }: `uploadPath` is what gets uploaded
+// to the sandbox (may be a subfolder of the clone, for a GitHub tree URL);
+// `cleanupPath` is always the top-level clone directory, so cleanup removes
+// the *whole* checkout even when only a subfolder of it was graded — a
+// tree-URL submission must not leak the rest of the cloned repo on disk.
 export default async function extractSubmission(repoUrl) {
 
   if (!repoUrl) {
     throw new Error("Repository URL is required");
   }
 
+  const treeUrl = parseGithubTreeUrl(repoUrl);
+  const cloneUrl = treeUrl ? treeUrl.cloneUrl : repoUrl;
+
   // Bug (backendBugs.md #7): unlike the visual/JS evaluators, `repoUrl` here
   // went straight into `git clone` with no SSRF/allowlist check — a
   // submission could point at an internal host, a loopback/metadata address,
   // or (without a `--` terminator) an argument that git interprets as a
   // flag instead of a URL. Same guard the visual and JS evaluators use.
-  await assertSafeUrl(repoUrl, { allowedHosts: getAllowedGitHosts() });
+  // (Validated against the *rewritten* clone URL when a tree URL was
+  // detected — same host either way, so this doesn't relax the check.)
+  await assertSafeUrl(cloneUrl, { allowedHosts: getAllowedGitHosts() });
 
   const folderName =
     `submission-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
@@ -33,13 +75,31 @@ export default async function extractSubmission(repoUrl) {
 
   try {
 
-    await git.clone(repoUrl, targetPath, [
-      "--depth",
-      "1",
-      "--"
-    ]);
+    const cloneArgs = ["--depth", "1"];
+    if (treeUrl) {
+      cloneArgs.push("--branch", treeUrl.branch);
+    }
+    cloneArgs.push("--");
 
-    return targetPath;
+    await git.clone(cloneUrl, targetPath, cloneArgs);
+
+    if (!treeUrl || !treeUrl.subPath) {
+      return { uploadPath: targetPath, cleanupPath: targetPath };
+    }
+
+    // Guard against a malicious/malformed subPath (e.g. "../../etc") ever
+    // resolving outside the freshly-cloned targetPath.
+    const subPath = path.resolve(targetPath, treeUrl.subPath);
+    if (!subPath.startsWith(targetPath + path.sep)) {
+      throw new Error(`Invalid path in repository URL: "${treeUrl.subPath}"`);
+    }
+    if (!(await fs.pathExists(subPath))) {
+      throw new Error(
+        `Path "${treeUrl.subPath}" was not found in the repository (branch "${treeUrl.branch}").`
+      );
+    }
+
+    return { uploadPath: subPath, cleanupPath: targetPath };
 
   } catch (err) {
 
