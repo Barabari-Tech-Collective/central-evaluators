@@ -659,3 +659,103 @@ $ node scripts/test-backend-evaluator.mjs
 $ npm run test:unit
 (all ✅, exit code 0)
 ```
+
+---
+
+## 11. Follow-up: route detection missed FastAPI's `APIRouter` pattern entirely
+
+Reported against a real repo built specifically to exercise this layout
+(`backend-eval-demo-advanced-python`): a live evaluation scored
+"Authentication works" 13/25, with AI feedback claiming "the login endpoint
+is returning a 404 ... check your routes configuration are properly
+registered." The app is correct — its real login route
+(`POST /api/auth/login`) was verified directly with a real FastAPI
+`TestClient` (see below), independent of the evaluator.
+
+| # | File | Issue |
+|---|------|-------|
+| 21 | `injectors/pyTestInjector.js`, `injectors/testInjector.js` | 🔴 `injectPythonTests()`/`extractPythonRoutes()` only ever read a single entry file (`main.py` or `app.py`, via `cat main.py 2>/dev/null \|\| cat app.py ...`) to find route decorators. This misses routes defined via FastAPI's `APIRouter` pattern in a separate file (`routers/auth_router.py`, with `router = APIRouter(prefix="/api/auth")` and `@router.post("/login")`, wired up from `main.py` via `app.include_router(auth_router)`) — an extremely common, encouraged layout for anything beyond a trivial single-file FastAPI app, and exactly how `backend-eval-demo-advanced-python` is structured. Since `main.py` has no literal `@app.post(...)`/`@router.post(...)` decorators of its own, `extractPythonRoutes()` found zero routes, so `generatePythonAuthTests()` fell back to its hardcoded default (`/login`) instead of the app's real `/api/auth/login` — the auto-generated test hit a URL that genuinely doesn't exist, producing a false-negative 404 against a correct app. `injectors/testInjector.js`'s Express-side `extractRoutes()` has the identical structural gap (only reads `server.js`/`app.js`/`index.js`): a route defined only in a separate `express.Router()` file (e.g. `routes/authRoutes.js`, mounted via `app.use(...)` in the entry file) was equally invisible, though no live repro was reported for the JS side. |
+
+### Fix
+
+- `injectors/pyTestInjector.js`: `injectPythonTests()` now runs
+  `find <projectPath> -type f -name "*.py" -exec grep -lE
+  "@(app|router)\.(get|post|put|delete|patch)" {} +` (excluding
+  `venv`/`.venv`/`__pycache__`/`site-packages`) to locate *every* `.py`
+  file containing a route decorator, not just `main.py`/`app.py`, and
+  concatenates their content (joined by a `###FILE###` separator) for
+  `extractPythonRoutes()`. That function now splits on the separator and,
+  per file, resolves that file's own `APIRouter(prefix="...")` (if any) and
+  applies it to the `@router.*` routes declared in the same file, before
+  merging + deduping routes across all files. `@router.get("")` (mounting a
+  router's own root path — used by the demo repo's product-list route) is
+  now matched too (the route-path capture group changed from `+` to `*`,
+  since it previously required at least one non-quote character).
+- `injectors/testInjector.js`: `injectEvaluatorTests()` now runs the
+  equivalent `find ... -exec grep -lE "(app|router|server)\s*\.\s*(get|post|put|delete|patch)\s*\("
+  {} +` (excluding `node_modules`) across every `.js` file, not just the
+  entry point, and feeds the concatenated content to the existing
+  `extractRoutes()` — which already dedupes across a single string, so no
+  further per-file changes were needed there. Unlike FastAPI's
+  `APIRouter(prefix=...)`, Express's mount prefix is declared at the
+  *mounting* call site (`app.use('/api/auth', authRouter)`) in a different
+  file from the router itself, so it isn't resolved by this pass — routes
+  defined in a separate router file are now detected, but without a mount
+  prefix if one exists. No live JS repro reported this specific gap, so
+  the mount-prefix resolution is left as a documented follow-up rather than
+  guessed at further.
+- Both shell commands use `find ... -exec ... {} +` piped into a
+  `while IFS= read -r f; do ...; cat -- "$f"; done` loop rather than
+  splicing filenames into a shell string (e.g. via `xargs -I{} sh -c
+  '... "{}"'`) — the same class of care as the SSRF/injection guards in
+  bugs #7/#18, since these filenames come from an untrusted, student-
+  submitted repo.
+
+### Confirmed by running the code
+
+```
+$ git clone https://github.com/armasahar/backend-eval-demo-advanced-python.git
+$ cat routers/auth_router.py | grep -E "APIRouter|@router"
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+@router.post("/register", status_code=201)
+@router.post("/login")
+
+Real app, verified independently with a live FastAPI TestClient:
+  POST /api/auth/login  -> 200   (the app's real route — genuinely works)
+  POST /login           -> 404   (the evaluator's old hardcoded fallback)
+
+Before fix (old injectPythonTests against this exact repo):
+  detectedRoutes: []
+  generated test: client.post("/login", ...)   <- hits a route that doesn't exist
+
+After fix (new injectPythonTests against this exact repo):
+  detectedRoutes: [
+    { method: 'GET',  path: '/api/products' },
+    { method: 'GET',  path: '/api/products/{product_id}' },
+    { method: 'POST', path: '/api/products' },
+    { method: 'POST', path: '/api/auth/register' },
+    { method: 'POST', path: '/api/auth/login' },
+    { method: 'GET',  path: '/health' }
+  ]
+  generated test: client.post("/api/auth/login", ...)   <- hits the app's real route
+
+$ node scripts/test-backend-evaluator.mjs
+✅ extractRoutes: finds a route defined only in a separate router file, not the entry file
+✅ injectPythonTests: finds POST /api/auth/login (route + APIRouter prefix live in a separate router file from main.py)
+✅ injectPythonTests: finds POST /api/auth/register with the same resolved prefix
+✅ injectPythonTests: generated auth test hits the real /api/auth/login route, not the hardcoded /login fallback
+... (all prior checks still pass)
+86/87 passed.
+
+$ npm run test:unit
+86 passed, 1 failed, 87 total.
+```
+
+**Caveat, stated plainly:** the one failing check (`getAiFeedback: old call
+shape ... throws`) is pre-existing and unrelated to this fix — confirmed by
+running `node scripts/test-backend-evaluator.mjs` on the unmodified branch
+first (`git stash`), which already showed `82 passed, 1 failed, 83 total`
+before any of this section's changes. It's an environment issue (no valid
+`GROQ_API_KEY` in this session — the Groq SDK throws an auth error before
+the code path this check exercises is reached), not a regression from
+route detection.
