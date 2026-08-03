@@ -544,3 +544,68 @@ clone still works: [ '.git', '.gitignore', 'package.json', 'server.js' ]
 $ npm run test:unit
 (all ✅, exit code 0)
 ```
+
+---
+
+## 9. Follow-up: a rubric criterion's exact wording silently changed which tests ran
+
+Reported after both prior deploy issues (E2B key, git TTY prompt) were fixed
+and the pipeline was confirmed working end-to-end on Render. Two real demo
+submissions were graded live: `backend-eval-demo-beginner-correct` scored
+100/100 as expected, but `backend-eval-demo-advanced-buggy` — a repo with a
+real bug (product creation has no auth check at all) — *also* scored
+100/100, when it should have lost points on the criterion meant to catch
+exactly that.
+
+| # | File | Issue |
+|---|------|-------|
+| 19 | `injectors/testInjector.js` | 🔴 `matchCriteria()` does a plain substring check (`nameLower.includes(k)`) against `CRITERION_PATTERNS`, in list order, and generates tests from the *first* pattern that matches. The generic auth pattern's keyword `'auth'` is a substring of "unauthenticated," "authorization," and "authentication" — and that pattern was listed *first*. The rubric criterion in question was named `"Protected routes reject unauthenticated requests"`, which obviously should have matched the `protected` pattern (a real, separate pattern that exists specifically for this) — but because `'auth'` matched first and stopped the search, it generated generic login/register-existence tests instead, which the buggy repo still passes (it does have working login/register endpoints — the bug is elsewhere, in access control on a *different* route). The rubric name never got a chance to reach the check that would have caught the actual bug. This isn't a one-off: any criterion mentioning authentication/authorization concepts (extremely common, natural phrasing for a rubric) was silently steered away from the more specific `jwt`/`protected` categories whenever the word "auth" happened to appear as a substring — with no warning that this happened. |
+
+### Fix
+
+Reordered `CRITERION_PATTERNS` so the narrower, more specific patterns
+(`jwt`/`token`/`bearer`/`authorization`, then `protected`/`middleware`/
+`guard`/`access control`) are checked *before* the broad generic `auth`
+pattern. A criterion only falls through to the generic auth tests now if
+nothing more specific matched first — which also means criteria that were
+already correctly matching the generic category (e.g. `"Authentication
+works"`, which contains no jwt/protected keyword) are completely
+unaffected.
+
+A more general "pick the most specific match across all patterns" scheme
+was considered instead of reordering two entries, but reordering is the
+smaller, easier-to-verify change for the actual reported failure mode, and
+this file has no other keyword collisions of the same kind (checked the
+rest of `CRITERION_PATTERNS` for other "broad keyword is a substring of a
+narrower one" cases — none found).
+
+### Confirmed by running the code
+
+```
+Before fix:
+  matched protected-route generator: false
+  matched generic auth generator: true    <- wrong: criterion literally
+                                              named "...unauthenticated
+                                              requests" generated login/
+                                              register-existence tests
+
+After fix:
+  matched protected-route generator: true
+  matched generic auth generator (should be false now): false
+
+$ node scripts/test-backend-evaluator.mjs
+✅ "Protected routes reject unauthenticated requests" matches its specific category, not the generic auth one
+✅ "Authorization header is validated" matches its specific category, not the generic auth one
+✅ "Access control blocks unauthenticated requests" matches its specific category, not the generic auth one
+✅ "Authentication works" (no jwt/protected keyword) still matches the generic auth category
+... (all prior checks still pass)
+
+$ npm run test:unit
+(all ✅, exit code 0)
+```
+
+**Note for anyone writing rubrics with this evaluator in the meantime:**
+even with this fix, keyword-based criterion matching is inherently
+sensitive to wording — prefer criterion names that lead with the specific
+concept (e.g. `"JWT token validation"`, `"Protected route middleware"`)
+over ones that bury it after a generic word.
