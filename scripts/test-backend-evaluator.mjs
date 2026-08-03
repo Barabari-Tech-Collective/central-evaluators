@@ -24,7 +24,7 @@ import { evaluateResults } from "../evaluators/backend/scoringService.js";
 import { normalizeJestResults, normalizePytestResults } from "../evaluators/backend/utils/normalizeResults.js";
 import getAiFeedback from "../evaluators/backend/feedbackService.js";
 import { generateTestFileContent, injectEvaluatorTests } from "../evaluators/backend/injectors/testInjector.js";
-import { injectPythonTests } from "../evaluators/backend/injectors/pyTestInjector.js";
+import { injectPythonTests, generatePythonTestFile } from "../evaluators/backend/injectors/pyTestInjector.js";
 import extractSubmission, { parseGithubTreeUrl } from "../evaluators/backend/extractService.js";
 import { uploadDirectory } from "../evaluators/backend/sandboxService.js";
 import runJestEvaluation from "../evaluators/backend/runners/jestRunner.js";
@@ -675,6 +675,34 @@ section("FEATURE (intermediate) — pytest criterion-pattern coverage (pyTestInj
     const written = files["/home/user/app/test_evaluator.py"];
     check(`injectPythonTests: "${name}" produces a runnable pytest file`, !!written && written.includes("def test_"));
   }
+}
+
+section("BUG REGRESSION — pyTestInjector: every generated test function gets its own CRITERION marker");
+{
+  // Reported live: backend-eval-demo-beginner-python scored 100/100 while
+  // test_auth_login_rejects_empty (one of the two functions
+  // generatePythonAuthTests returns) actually failed on Render. Root cause:
+  // @pytest.mark.parametrize(...) was prepended once before the whole
+  // generated section, but a Python decorator only applies to the single
+  // `def` immediately following it — so only the *first* of the two
+  // functions got the CRITERION:[...] marker. The second ran untagged
+  // (criterion=null in normalizePytestResults), so its failure didn't
+  // count against any rubric criterion; worse, with no parametrize
+  // supplying the `marker` argument, pytest couldn't even resolve it as a
+  // fixture, so it errored rather than testing real app behavior.
+  const content = generatePythonTestFile([], { criteria: [{ name: "Authentication works", weight: 100 }] });
+  const defCount = (content.match(/^def test_auth_login/gm) || []).length;
+  const decoratedCount = (content.match(/@pytest\.mark\.parametrize\("marker", \["CRITERION:\[Authentication works\]"\]\)\ndef test_auth_login/g) || []).length;
+  check(
+    "generatePythonAuthTests still returns both auth test functions",
+    defCount === 2,
+    `found ${defCount}`
+  );
+  check(
+    "every one of those functions gets its own CRITERION marker decorator, not just the first",
+    decoratedCount === 2,
+    `${decoratedCount}/${defCount} decorated`
+  );
 }
 
 section("FEATURE (advanced) — full pipeline: raw runner output -> normalize -> score");

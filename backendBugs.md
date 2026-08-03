@@ -609,3 +609,53 @@ even with this fix, keyword-based criterion matching is inherently
 sensitive to wording — prefer criterion names that lead with the specific
 concept (e.g. `"JWT token validation"`, `"Protected route middleware"`)
 over ones that bury it after a generic word.
+
+---
+
+## 10. Follow-up: a Python test that actually failed didn't affect the score
+
+Reported live while capturing documentation screenshots against the
+deployed instance: `backend-eval-demo-beginner-python` scored 100/100, but
+the AI feedback panel described a *specific failing test*
+(`test_auth_login_rejects_empty`) — a live contradiction between the score
+and the evaluator's own generated commentary.
+
+| # | File | Issue |
+|---|------|-------|
+| 20 | `injectors/pyTestInjector.js` | 🔴 `generatePythonAuthTests()` returns **two** `def test_...` functions in one string (login-exists, login-rejects-empty). `generatePythonTestFile()` prepended a single `@pytest.mark.parametrize("marker", ["CRITERION:[...]"])` decorator once, before the whole two-function block — but in Python, a decorator only ever applies to the *single* `def` immediately following it. Only the first function got tagged with the criterion marker; the second ran with an unresolvable `marker` argument (no fixture, no parametrize source), which made pytest **error on it** rather than actually testing the app's behavior — and with no `CRITERION:[...]` in its nodeid, `normalizePytestResults` couldn't attach it to any rubric criterion, so that error/failure counted toward nothing. A criterion with a real, meaningful failure inside it (login not rejecting empty credentials) could score 100% anyway, because the test that would have caught it was invisible to scoring. Confirmed live: raw job data showed `test_auth_login_rejects_empty` with `status: "fail"` and `criterion: null`, while the criterion it should have belonged to ("Authentication works") still scored full marks. |
+
+### Fix
+
+Insert the criterion decorator before **every** `def test_` inside a
+section (`section.replace(/^def test_/gm, ...)`), not once before the
+whole block. Confirmed with a real local `pytest` run: after the fix, all
+4 tests (including the previously-orphaned one) collect and run correctly,
+each tagged with the right `CRITERION:[...]` marker — the demo app itself
+was correct all along (Pydantic's automatic validation already returns 422
+for an empty login body, not 200); this was purely a test-generation bug,
+not a false negative caused by anything in the graded app.
+
+Any future Python criterion generator that returns more than one test
+function benefits from this same fix automatically, since it operates on
+the whole section string rather than special-casing the auth generator.
+
+### Confirmed by running the code
+
+```
+Before fix (real job on the deployed instance):
+  test_auth_login_rejects_empty -> status: fail, criterion: null
+  "Authentication works" rubric criterion -> 50/50 anyway
+
+After fix (real pytest run against a real clone of the demo repo):
+  test_evaluator.py::test_auth_login_exists[CRITERION:[Authentication works]]         PASSED
+  test_evaluator.py::test_auth_login_rejects_empty[CRITERION:[Authentication works]]  PASSED
+  4 passed in 0.15s
+
+$ node scripts/test-backend-evaluator.mjs
+✅ generatePythonAuthTests still returns both auth test functions
+✅ every one of those functions gets its own CRITERION marker decorator, not just the first
+... (all prior checks still pass)
+
+$ npm run test:unit
+(all ✅, exit code 0)
+```

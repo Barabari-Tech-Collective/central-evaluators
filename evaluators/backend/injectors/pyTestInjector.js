@@ -100,11 +100,25 @@ export function generatePythonTestFile(routes, rubric) {
         if (seenSections.has(section)) return "";
         seenSections.add(section);
 
-        // Parametrize with the CRITERION marker so pytest nodeid includes it
-        return `
-@pytest.mark.parametrize("marker", ["CRITERION:[${criterion.name}]"])
-${section}
-`;
+        // Bug: reported live — a criterion's generated section can contain
+        // more than one `def test_...` function (generatePythonAuthTests
+        // returns two: login-exists and login-rejects-empty). A Python
+        // decorator only ever applies to the single `def` immediately
+        // following it, so prepending @pytest.mark.parametrize(...) once
+        // before the whole section only tagged the *first* function with
+        // this criterion's CRITERION:[...] marker — the second ran and
+        // could fail, but with no marker at all its nodeid never matched
+        // this (or any) criterion in normalizePytestResults/scoringService,
+        // so a real failure (e.g. login not rejecting empty credentials)
+        // silently counted toward nothing and the criterion still scored
+        // 100%. Confirmed live: backend-eval-demo-beginner-python scored
+        // 100/100 with test_auth_login_rejects_empty actually failing.
+        // Fix: insert the decorator before *every* `def test_` in the
+        // section, not just once before the whole block.
+        const decorator = `@pytest.mark.parametrize("marker", ["CRITERION:[${criterion.name}]"])`;
+        const decoratedSection = section.replace(/^def test_/gm, `${decorator}\ndef test_`);
+
+        return `\n${decoratedSection}\n`;
     }).join('\n');
 
     return `import pytest
