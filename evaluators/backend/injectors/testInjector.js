@@ -31,22 +31,40 @@ function extractRoutes(code) {
 }
 
 // ── Rubric → Test Section Mapping ─────────────────────────────────────────────
+// Author: Arma Sahar
+// Bug: reported live — a rubric criterion named "Protected routes reject
+// unauthenticated requests" got matched to the generic login/register
+// "auth" tests instead of the protected-route tests it was obviously meant
+// to trigger, because matchCriteria() does a plain substring check
+// (`nameLower.includes(k)`) and stops at the *first* pattern that matches,
+// in list order — and "auth" is a substring of "unauthenticated". Since
+// the "auth" pattern used to be listed first, ANY criterion mentioning
+// authentication/authorization/unauthenticated concepts (extremely common
+// phrasing) always won the generic auth category, even when a much more
+// specific and clearly-intended pattern (jwt/protected) also matched.
+// Fix: list the narrower, more specific patterns (jwt, protected) before
+// the broad generic "auth" one, so a name like "...unauthenticated..."
+// matches "protected" first instead. Confirmed this doesn't change
+// behavior for criteria that were already matching correctly (e.g.
+// "Authentication works" still has no 'jwt'/'protected'/'middleware'/etc.
+// keyword, so it still falls through to the auth pattern exactly as
+// before) — see scripts/test-backend-evaluator.mjs.
 const CRITERION_PATTERNS = [
-    {
-        keywords: ['auth', 'login', 'register', 'signup'],
-        generate: (routes) => generateAuthTests(routes)
-    },
     {
         keywords: ['jwt', 'token', 'bearer', 'authorization'],
         generate: (routes) => generateJwtValidationTests(routes)
     },
     {
-        keywords: ['schema', 'response format', 'response shape', 'payload', 'validation'],
-        generate: (routes) => generateSchemaValidationTests(routes)
-    },
-    {
         keywords: ['protected', 'middleware', 'guard', 'access control', 'authorization'],
         generate: (routes) => generateProtectedRouteTests(routes)
+    },
+    {
+        keywords: ['auth', 'login', 'register', 'signup'],
+        generate: (routes) => generateAuthTests(routes)
+    },
+    {
+        keywords: ['schema', 'response format', 'response shape', 'payload', 'validation'],
+        generate: (routes) => generateSchemaValidationTests(routes)
     },
     {
         keywords: ['health', 'status', 'ping'],

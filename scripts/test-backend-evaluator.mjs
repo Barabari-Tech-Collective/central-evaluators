@@ -607,6 +607,35 @@ section("FEATURE (intermediate) — Jest criterion-pattern coverage (testInjecto
   }
 }
 
+section("BUG REGRESSION — criterion keyword matching: specific patterns beat the generic 'auth' substring");
+{
+  // Reported live: a rubric criterion "Protected routes reject
+  // unauthenticated requests" was matched to the generic login/register
+  // "auth" tests instead of the protected-route tests it obviously meant,
+  // because "auth" is a substring of "unauthenticated" and the generic
+  // auth pattern used to be checked before the more specific jwt/protected
+  // ones. Fixed by reordering CRITERION_PATTERNS; these checks pin the
+  // fix by name so the ordering can't silently regress.
+  const routes = [];
+  const cases = [
+    { name: "Protected routes reject unauthenticated requests", marker: "Protected routes: unauthenticated requests are rejected", notMarker: "Auth: login endpoint exists" },
+    { name: "Authorization header is validated", marker: "JWT:", notMarker: "Auth: login endpoint exists" },
+    { name: "Access control blocks unauthenticated requests", marker: "Protected routes: unauthenticated requests are rejected", notMarker: "Auth: login endpoint exists" }
+  ];
+  for (const { name, marker, notMarker } of cases) {
+    const content = generateTestFileContent(routes, { criteria: [{ name, weight: 100 }] });
+    check(`"${name}" matches its specific category, not the generic auth one`, content.includes(marker) && !content.includes(notMarker));
+  }
+
+  // Regression guard: criteria that legitimately want the generic auth
+  // category (no jwt/protected keyword present) must still get it.
+  const stillAuth = generateTestFileContent(routes, { criteria: [{ name: "Authentication works", weight: 100 }] });
+  check(
+    "\"Authentication works\" (no jwt/protected keyword) still matches the generic auth category",
+    stillAuth.includes("Auth: login endpoint exists")
+  );
+}
+
 section("FEATURE (intermediate) — Express route extraction (injectEvaluatorTests -> extractRoutes)");
 {
   const sampleServerCode = `
