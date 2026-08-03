@@ -9,20 +9,63 @@ function sanitize(name) {
     return name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
 }
 
-function extractPythonRoutes(code) {
+// Bug (backendBugs.md #21): route detection only ever looked at a single
+// entry file (main.py/app.py), which misses routes defined via FastAPI's
+// APIRouter pattern (e.g. `routers/auth_router.py`, mounted from main.py
+// with `app.include_router(...)`) — a common, encouraged layout for
+// anything beyond a trivial single-file app. injectPythonTests() now feeds
+// this function the *concatenated* content of every .py file that contains
+// a route decorator, joined by FILE_SEPARATOR, so each file's routes (and
+// its own APIRouter `prefix=`, if any) can be resolved independently before
+// merging. A plain (unseparated) string still works exactly as before —
+// split() on a string with no separator just yields a single chunk.
+const FILE_SEPARATOR = '###FILE###';
+
+function extractRoutesFromSource(code) {
     const routes = [];
-    const seen = new Set();
-    
+
+    // Resolve this file's router prefix, if it declares one:
+    // router = APIRouter(prefix="/api/auth", ...)
+    let prefix = '';
+    const apiRouterMatch = code.match(/APIRouter\(([^)]*)\)/);
+    if (apiRouterMatch) {
+        const prefixMatch = apiRouterMatch[1].match(/prefix\s*=\s*['"`]([^'"`]*)['"`]/);
+        if (prefixMatch) prefix = prefixMatch[1].replace(/\/+$/, '');
+    }
+
     // Pattern for @app.get("/path"), @router.post('/path'), etc.
-    const routeRegex = /@(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
+    // (`*` instead of `+` so `@router.get("")` — a common way to mount a
+    // router's own root path — still matches.)
+    const routeRegex = /@(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]*)['"`]/gi;
     let match;
     while ((match = routeRegex.exec(code)) !== null) {
         const method = match[1].toUpperCase();
-        const path = match[2];
-        const key = `${method}:${path}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            routes.push({ method, path });
+        const rawPath = match[2];
+        let path;
+        if (!prefix) {
+            path = rawPath;
+        } else if (rawPath === '' || rawPath === '/') {
+            path = prefix;
+        } else {
+            path = `${prefix}${rawPath.startsWith('/') ? '' : '/'}${rawPath}`;
+        }
+        routes.push({ method, path: path || '/' });
+    }
+    return routes;
+}
+
+function extractPythonRoutes(code) {
+    const routes = [];
+    const seen = new Set();
+
+    for (const fileCode of code.split(FILE_SEPARATOR)) {
+        if (!fileCode.trim()) continue;
+        for (const route of extractRoutesFromSource(fileCode)) {
+            const key = `${route.method}:${route.path}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                routes.push(route);
+            }
         }
     }
     return routes;
@@ -166,9 +209,18 @@ def test_app_loadable():
 export async function injectPythonTests(sandbox, projectPath, rubric) {
     console.log(`[pythonTestInjector] Generating Python/FastAPI tests...`);
 
-    // Find entry point code to extract routes
+    // Route decorators are commonly split across files (FastAPI's
+    // APIRouter pattern: e.g. routers/auth_router.py, wired up from
+    // main.py via app.include_router(...)) — scan every .py file that
+    // contains an @app./@router. route decorator, not just main.py/app.py,
+    // and merge routes found across all of them (backendBugs.md #21).
+    // `find ... -exec ... {} +` / `while read -r f; do ... "$f"; done`
+    // avoids ever splicing an untrusted filename into a shell string.
     const readCmd = await sandbox.commands.run(
-        `cat ${projectPath}/main.py 2>/dev/null || cat ${projectPath}/app.py 2>/dev/null || echo ""`
+        `find ${projectPath} -type f -name "*.py" ` +
+        `-not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/__pycache__/*" -not -path "*/site-packages/*" ` +
+        `-exec grep -lE "@(app|router)\\.(get|post|put|delete|patch)" {} + 2>/dev/null ` +
+        `| while IFS= read -r f; do echo '${FILE_SEPARATOR}'; cat -- "$f"; done`
     );
     const code = readCmd.stdout || "";
     const routes = extractPythonRoutes(code);

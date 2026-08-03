@@ -647,7 +647,7 @@ section("FEATURE (intermediate) — Express route extraction (injectEvaluatorTes
   `;
   const files = {};
   const sandbox = {
-    commands: { run: async (cmd) => ({ stdout: cmd.includes("server.js") ? sampleServerCode : "" }) },
+    commands: { run: async (cmd) => ({ stdout: cmd.includes("find") ? sampleServerCode : "" }) },
     files: { write: async (p, c) => { files[p] = c; } }
   };
   const { detectedRoutes } = await injectEvaluatorTests(sandbox, "/home/user/app", { criteria: [{ name: "REST API endpoints", weight: 100 }] });
@@ -659,6 +659,30 @@ section("FEATURE (intermediate) — Express route extraction (injectEvaluatorTes
   check(
     "extractRoutes: generated test file references a detected route",
     files["/home/user/app/evaluator.test.js"]?.includes("/health")
+  );
+}
+
+section("BUG REGRESSION — Express route extraction merges routes split across multiple files (backendBugs.md #21)");
+{
+  // Reported live for the Python side (see below), but testInjector.js has
+  // the identical structural gap: routes defined in a separate router file
+  // (e.g. routes/authRoutes.js, mounted via app.use(...) in the entry file)
+  // were invisible to route detection because injectEvaluatorTests only
+  // ever read the single entry file. Simulates the multi-file `find | cat`
+  // output injectEvaluatorTests now generates: entry file with no routes of
+  // its own, plus a separate router file with the real route.
+  const entryFileCode = `const app = express(); app.use('/api/auth', require('./routes/authRoutes'));`;
+  const routerFileCode = `const router = express.Router(); router.post('/login', handler); module.exports = router;`;
+  const files = {};
+  const sandbox = {
+    commands: { run: async (cmd) => ({ stdout: cmd.includes("find") ? `${entryFileCode}\n${routerFileCode}\n` : "" }) },
+    files: { write: async (p, c) => { files[p] = c; } }
+  };
+  const { detectedRoutes } = await injectEvaluatorTests(sandbox, "/home/user/app", { criteria: [{ name: "REST API endpoints", weight: 100 }] });
+  check(
+    "extractRoutes: finds a route defined only in a separate router file, not the entry file",
+    detectedRoutes.some(r => r.method === "POST" && r.path === "/login"),
+    `found: ${detectedRoutes.map(r => `${r.method} ${r.path}`).join(", ") || "(none)"}`
   );
 }
 
@@ -675,6 +699,72 @@ section("FEATURE (intermediate) — pytest criterion-pattern coverage (pyTestInj
     const written = files["/home/user/app/test_evaluator.py"];
     check(`injectPythonTests: "${name}" produces a runnable pytest file`, !!written && written.includes("def test_"));
   }
+}
+
+section("BUG REGRESSION — pyTestInjector finds routes split across FastAPI APIRouter files (backendBugs.md #21)");
+{
+  // Reported live against a real repo (backend-eval-demo-advanced-python):
+  // main.py has no literal @app.post(...)/@router.post(...) decorators —
+  // every route lives in routers/auth_router.py, mounted via
+  // app.include_router(auth_router) — so extractPythonRoutes() used to find
+  // zero routes, and generatePythonAuthTests() fell back to a hardcoded
+  // "/login" that genuinely doesn't exist (the real route is
+  // "/api/auth/login", built from routers/auth_router.py's own
+  // `router = APIRouter(prefix="/api/auth")`). Confirmed live: the
+  // deployed evaluator scored "Authentication works" 13/25 with AI feedback
+  // claiming the login endpoint 404s, even though the app is correct
+  // (verified separately with a real FastAPI TestClient — see backendBugs.md).
+  //
+  // Simulates the multi-file `find | grep -l | cat` output
+  // injectPythonTests now generates: main.py with no route decorators of
+  // its own, plus a separate router file whose APIRouter(prefix=...) must
+  // be resolved and applied to the routes it declares.
+  const mainPyCode = `
+from fastapi import FastAPI
+from routers.auth_router import router as auth_router
+app = FastAPI()
+app.include_router(auth_router)
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+`;
+  const authRouterCode = `
+from fastapi import APIRouter
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+@router.post("/login")
+def login(body):
+    ...
+
+@router.post("/register", status_code=201)
+def register(body):
+    ...
+`;
+  const files = {};
+  const sandbox = {
+    commands: {
+      run: async (cmd) => ({
+        stdout: cmd.includes("find") ? `###FILE###\n${mainPyCode}###FILE###\n${authRouterCode}` : ""
+      })
+    },
+    files: { write: async (p, c) => { files[p] = c; } }
+  };
+  const { detectedRoutes } = await injectPythonTests(sandbox, "/home/user/app", { criteria: [{ name: "Authentication works", weight: 25 }] });
+  check(
+    "injectPythonTests: finds POST /api/auth/login (route + APIRouter prefix live in a separate router file from main.py)",
+    detectedRoutes.some(r => r.method === "POST" && r.path === "/api/auth/login"),
+    `found: ${detectedRoutes.map(r => `${r.method} ${r.path}`).join(", ") || "(none)"}`
+  );
+  check(
+    "injectPythonTests: finds POST /api/auth/register with the same resolved prefix",
+    detectedRoutes.some(r => r.method === "POST" && r.path === "/api/auth/register")
+  );
+  const written = files["/home/user/app/test_evaluator.py"];
+  check(
+    "injectPythonTests: generated auth test hits the real /api/auth/login route, not the hardcoded /login fallback",
+    written?.includes('client.post("/api/auth/login"') && !written?.includes('client.post("/login"')
+  );
 }
 
 section("BUG REGRESSION — pyTestInjector: every generated test function gets its own CRITERION marker");
