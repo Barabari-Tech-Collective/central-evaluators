@@ -71,7 +71,16 @@ export default async function extractSubmission(repoUrl) {
 
   await fs.ensureDir(targetPath);
 
-  const git = simpleGit();
+  // Bug: reported from the deployed instance right after the E2B fix landed
+  // -- a clone of a genuinely public repo failed with "fatal: could not
+  // read Username for 'https://github.com': No such device or address".
+  // That's git trying to open a TTY to prompt for credentials and failing
+  // because there isn't one on a headless server -- happens for a repo
+  // that's actually private/mistyped/rate-limited, where a local dev
+  // machine's git would just prompt (and eventually the request would still
+  // fail, only slower). GIT_TERMINAL_PROMPT=0 makes git fail fast with a
+  // real error message instead of attempting to prompt at all.
+  const git = simpleGit().env("GIT_TERMINAL_PROMPT", "0");
 
   try {
 

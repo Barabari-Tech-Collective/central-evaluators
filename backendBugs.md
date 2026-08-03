@@ -505,3 +505,42 @@ not just reasoned about:
   repo root) from being collected. Actually fine: an explicit file argument
   on the pytest CLI (`pytest test_evaluator.py`) overrides `testpaths` —
   confirmed the injected file still collects and runs regardless.
+
+---
+
+## 8. Follow-up: clone failing on the deployed host with a TTY-prompt error
+
+Reported right after the deployed instance's missing `E2B_API_KEY` was
+fixed — the very next real submission failed with a different error:
+`fatal: could not read Username for 'https://github.com': No such device
+or address`, against a repo confirmed genuinely public (`git ls-remote`
+against it succeeds locally, repeatedly).
+
+| # | File | Issue |
+|---|------|-------|
+| 18 | `extractService.js` | 🟡 `simple-git` shells out to the real `git` binary, which — if it ever thinks a clone might need credentials (private repo, rate limit, a networking hiccup that looks like an auth challenge) — tries to open a TTY to prompt for a username interactively. On a headless server there is no TTY, so that attempt itself fails with the cryptic `No such device or address`, instead of the clear "repository not found"/timeout a human running the same command locally would eventually get (git would just prompt them, uselessly, since these are automated jobs with no one to answer). |
+
+### Fix
+
+`simpleGit().env("GIT_TERMINAL_PROMPT", "0")` — disables git's interactive
+credential prompting outright, so any clone that would have hung waiting
+for a TTY now fails immediately with a real, readable error instead.
+
+**Caveat, stated plainly:** this fixes the *symptom* (the confusing hang/
+error) and is good defensive practice regardless, but I can't rule out
+from here whether the *original* clone attempt on Render was also hitting
+a real network/DNS/rate-limit condition specific to that host (I have no
+shell access to Render to check its outbound connectivity directly). If a
+clone of a known-public repo still fails after this deploys, the next
+thing to check is whether Render's outbound network can reach
+`github.com` at all, not this code path.
+
+### Confirmed by running the code
+
+```
+$ node -e "extractSubmission('https://github.com/armasahar/backend-eval-demo-1-correct-node.git')"
+clone still works: [ '.git', '.gitignore', 'package.json', 'server.js' ]
+
+$ npm run test:unit
+(all ✅, exit code 0)
+```
