@@ -574,11 +574,25 @@ ${criteriaTests.join('\n')}
 export async function injectEvaluatorTests(sandbox, projectPath, rubric) {
     console.log(`[testInjector] No test files found. Generating evaluator test suite...`);
 
+    // Route definitions are commonly split across files (Express Router()
+    // pattern: e.g. routes/authRoutes.js, mounted from the entry file via
+    // app.use(...)) — scan every .js file that contains a route-defining
+    // call, not just the entry point, and merge routes found across all of
+    // them (backendBugs.md #21, same gap as pyTestInjector.js). extractRoutes
+    // already dedupes across a single concatenated string, so no further
+    // per-file handling is needed here (unlike FastAPI's per-router
+    // `prefix=`, Express's mount prefix lives in the *mounting* file, not
+    // the router file itself, so it isn't resolved by this pass — see
+    // backendBugs.md #21 for the scoping note).
+    // `find ... -exec ... {} +` / `while read -r f; do ... "$f"; done`
+    // avoids ever splicing an untrusted filename into a shell string.
     const readCmd = await sandbox.commands.run(
-        `cat ${projectPath}/server.js 2>/dev/null || cat ${projectPath}/app.js 2>/dev/null || cat ${projectPath}/index.js 2>/dev/null || echo ""`
+        `find ${projectPath} -type f -name "*.js" -not -path "*/node_modules/*" ` +
+        `-exec grep -lE "(app|router|server)\\s*\\.\\s*(get|post|put|delete|patch)\\s*\\(" {} + 2>/dev/null ` +
+        `| while IFS= read -r f; do cat -- "$f"; echo; done`
     );
     const serverCode = readCmd.stdout || '';
-    console.log(`[testInjector] Read ${serverCode.length} bytes from server entry point`);
+    console.log(`[testInjector] Read ${serverCode.length} bytes from route-bearing files`);
 
     const routes = extractRoutes(serverCode);
     console.log(`[testInjector] Detected ${routes.length} routes:`, routes.map(r => `${r.method} ${r.path}`).join(', '));
