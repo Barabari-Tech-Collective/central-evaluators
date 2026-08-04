@@ -32,6 +32,17 @@ export default async function getAiFeedback(testDetails, rubric) {
     return "AI-generated feedback is currently unavailable.";
   }
 
+  // Bug: reported live -- a submission where 0 tests ran at all (e.g. the
+  // project's language couldn't be detected, or the test run crashed before
+  // producing any results) got this same "Amazing work! ... perfectly."
+  // congratulatory message as a genuine 100% pass, since `testDetails` was
+  // an empty array either way and `failures.length === 0` is true in both
+  // cases. Zero failures only means "everything passed" when there was
+  // something to pass in the first place.
+  if (testDetails.length === 0) {
+    return "No tests could be run for this submission, so there's no pass/fail signal to give feedback on — see the warnings above for why.";
+  }
+
   // Filter for only failed tests to keep the prompt concise
   const failures = testDetails.filter(t => t.status === 'fail');
 

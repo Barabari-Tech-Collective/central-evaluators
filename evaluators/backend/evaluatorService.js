@@ -63,7 +63,19 @@ export async function evaluateBackendProject(payload) {
     // rubric object was passed positionally as `projectPath` (interpolated
     // into shell commands as "[object Object]") and `rubric` inside the
     // runner was `undefined`.
-    if (language === "python") {
+    if (language === null) {
+      // detectLanguage found neither a package.json nor a Python entry
+      // point -- there's no runner that could grade this. Fail the
+      // submission cleanly (0/0, explained) instead of guessing a language
+      // and letting the runner crash on a missing manifest.
+      testResults = {
+        passedCount: 0,
+        totalTests: 0,
+        test_details: [],
+        warnings: ["Could not detect a Node.js or Python project (no package.json, requirements.txt, main.py, or app.py found) — this submission could not be graded."],
+        execution_logs: []
+      };
+    } else if (language === "python") {
       testResults = await runPytestEvaluation(
         sandbox,
         projectPath,
