@@ -27,18 +27,49 @@ await fs.ensureDir(TMP_ROOT);
 // ever see whatever path extractSubmission returns.
 const GITHUB_TREE_URL_RE = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.*))?\/?$/i;
 
-export function parseGithubTreeUrl(url) {
-  const m = GITHUB_TREE_URL_RE.exec(url.trim());
-  if (!m) return null;
+// Author: Arma Sahar
+// Bug: reported live -- "https://github.com/user/repo/blob/main" (no file
+// segment at all, a truncated/malformed paste) failed with a generic clone
+// error. GitHub's "blob" URL is its web-UI page for viewing a *single
+// file*, not a clone target, same underlying problem as the /tree/ case
+// above but never handled. Also covers the more common shape with a real
+// file, e.g. ".../blob/main/src/index.js" -- rooting the evaluation at the
+// file itself would break every evaluator (they expect a project
+// directory: package.json, entry point, etc.), so this roots at the file's
+// *containing folder* instead, same as a /tree/ URL pointed at that folder.
+const GITHUB_BLOB_URL_RE = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)(?:\/(.*))?\/?$/i;
 
-  const [, owner, repo, branch, rawPath] = m;
+function buildGithubRef(owner, repo, branch, subPath) {
   return {
     cloneUrl: `https://github.com/${owner}/${repo.replace(/\.git$/i, "")}.git`,
     branch: decodeURIComponent(branch),
-    subPath: rawPath
-      ? rawPath.split("/").map(decodeURIComponent).join(path.sep)
-      : null
+    subPath: subPath || null
   };
+}
+
+export function parseGithubTreeUrl(url) {
+  const trimmed = url.trim();
+
+  const treeMatch = GITHUB_TREE_URL_RE.exec(trimmed);
+  if (treeMatch) {
+    const [, owner, repo, branch, rawPath] = treeMatch;
+    const subPath = rawPath
+      ? rawPath.split("/").map(decodeURIComponent).join(path.sep)
+      : null;
+    return buildGithubRef(owner, repo, branch, subPath);
+  }
+
+  const blobMatch = GITHUB_BLOB_URL_RE.exec(trimmed);
+  if (blobMatch) {
+    const [, owner, repo, branch, rawPath] = blobMatch;
+    if (!rawPath) return buildGithubRef(owner, repo, branch, null);
+
+    const decodedPath = rawPath.split("/").map(decodeURIComponent).join(path.sep);
+    const dir = path.dirname(decodedPath);
+    return buildGithubRef(owner, repo, branch, dir === "." ? null : dir);
+  }
+
+  return null;
 }
 
 // Returns { uploadPath, cleanupPath }: `uploadPath` is what gets uploaded
