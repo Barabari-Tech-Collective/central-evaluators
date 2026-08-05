@@ -142,9 +142,14 @@ export async function evaluateStudentsWithVision({
       throw err;
     }
 
+    // student.html comes from globby, which always normalizes to forward
+    // slashes; student.basePath comes from path.join, which uses backslashes
+    // on Windows. Normalize basePath first or the .replace below silently
+    // no-ops and relativeHtml stays a full absolute path.
+    const normalizedBasePath = student.basePath.replace(/\\/g, "/");
     const relativeHtml = student.html
-      .replace(student.basePath, "")
-      .replace(/\\/g, "/");
+      .replace(/\\/g, "/")
+      .replace(normalizedBasePath, "");
     const url = `${localUrl}${relativeHtml}`;
 
     const page = await context.newPage();
