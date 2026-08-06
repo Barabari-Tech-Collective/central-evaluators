@@ -64,16 +64,22 @@ function validateBackendPayload(payload) {
   }
   assertUrlSyntax(repoUrl, { allowedHosts: getAllowedGitHosts() });
 
-  if (!rubric || !Array.isArray(rubric.criteria) || rubric.criteria.length === 0) {
-    throw new ValidationError('rubric.criteria must be a non-empty array');
-  }
-
   // Bug found during audit, confirmed by actually running evaluateResults():
   // a criterion missing/with a non-numeric `weight` doesn't just score that
   // one criterion wrong — `maxScore += possiblePoints` accumulates a
   // running total, so one bad criterion turns the *entire* score NaN,
   // silently, for every submission graded against that rubric. Reject it
   // here instead of scoring every future submission as NaN.
+  validateRubricCriteria(rubric);
+}
+
+// Shared rubric.criteria shape check (backend/react both use it) — a
+// criterion missing/with a non-numeric weight silently NaNs the whole score
+// downstream (backendBugs.md), so reject it here instead.
+function validateRubricCriteria(rubric) {
+  if (!rubric || !Array.isArray(rubric.criteria) || rubric.criteria.length === 0) {
+    throw new ValidationError('rubric.criteria must be a non-empty array');
+  }
   rubric.criteria.forEach((criterion, i) => {
     if (!criterion || typeof criterion.name !== 'string' || !criterion.name.trim()) {
       throw new ValidationError(`rubric.criteria[${i}] is missing a string "name".`);
@@ -82,6 +88,26 @@ function validateBackendPayload(payload) {
       throw new ValidationError(`rubric.criteria[${i}] ("${criterion.name}") must have a positive numeric "weight".`);
     }
   });
+}
+
+// python: just needs a clonable repoUrl (test cases come from a fixed
+// server-side set, not the payload).
+function validatePythonPayload(payload) {
+  const { repoUrl } = payload;
+  if (typeof repoUrl !== 'string' || !repoUrl.trim()) {
+    throw new ValidationError('repoUrl is required');
+  }
+  assertUrlSyntax(repoUrl, { allowedHosts: getAllowedGitHosts() });
+}
+
+// react: repoUrl + a rubric, same criteria shape as backend.
+function validateReactPayload(payload) {
+  const { repoUrl, rubric } = payload;
+  if (typeof repoUrl !== 'string' || !repoUrl.trim()) {
+    throw new ValidationError('repoUrl is required');
+  }
+  assertUrlSyntax(repoUrl, { allowedHosts: getAllowedGitHosts() });
+  validateRubricCriteria(rubric);
 }
 
 export async function evaluate(req, res) {
@@ -101,6 +127,14 @@ export async function evaluate(req, res) {
 
     if (payload.type === 'backend') {
       validateBackendPayload(payload);
+    }
+
+    if (payload.type === 'python') {
+      validatePythonPayload(payload);
+    }
+
+    if (payload.type === 'react') {
+      validateReactPayload(payload);
     }
 
     const jobs = await routeEvaluation(payload);
