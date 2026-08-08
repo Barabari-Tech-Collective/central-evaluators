@@ -8,15 +8,17 @@ import logger from './config/logger.js';
 import redisConnection from './config/redis.js';
 
 // Initialize workers
-// NOTE: visual + javascript + backend are started for this deploy (backend
-// added once backendBugs.md's fixes landed — the worker existed and was
-// fully wired to its queue, but was never started here, so
-// backend-evaluation jobs would have sat in "waiting" forever regardless of
-// how correct the evaluator code was). react/python/fullstack aren't in
-// scope yet; re-add their initialize*/stop* calls below to bring them back.
+// NOTE: visual + javascript + backend + react + python are started for this
+// deploy. react/python repoService.js used to shell out via unescaped
+// execSync (same class of bug fixed for js in jsBugs.md #5) and never
+// cleaned up their cloned repos; both are now fixed to match the
+// simple-git + assertSafeUrl + deleteRepo pattern used by js/visual before
+// being wired in here. fullstack isn't in scope yet.
 import { initializeVisualWorker, stopVisualWorker } from './workers/visualWorker.js';
 import { initializeJsWorker, stopJsWorker } from './workers/jsWorker.js';
 import { initializeBackendWorker, stopBackendWorker } from './workers/backendWorker.js';
+import { initializeReactWorker, stopReactWorker } from './workers/reactWorker.js';
+import { initializePythonWorker, stopPythonWorker } from './workers/pythonWorker.js';
 
 import { requireApiKey, evaluateRateLimiter } from './middleware/auth.js';
 
@@ -46,7 +48,7 @@ async function startServer() {
     await queueManager.initialize();
     logger.info('✅ Queue manager initialized');
 
-    // 3. Initialize workers (visual + javascript + backend — see import comment above)
+    // 3. Initialize workers (visual + javascript + backend + react + python — see import comment above)
     await initializeVisualWorker();
     logger.info('✅ Visual worker initialized');
 
@@ -55,6 +57,12 @@ async function startServer() {
 
     await initializeBackendWorker();
     logger.info('✅ Backend worker initialized');
+
+    await initializeReactWorker();
+    logger.info('✅ React worker initialized');
+
+    await initializePythonWorker();
+    logger.info('✅ Python worker initialized');
 
     // 4. API routes (V-04: rate limit + API-key auth)
     app.post('/evaluate', evaluateRateLimiter, requireApiKey, evaluate);
@@ -147,6 +155,8 @@ async function shutdown(signal) {
     await stopVisualWorker();
     await stopJsWorker();
     await stopBackendWorker();
+    await stopReactWorker();
+    await stopPythonWorker();
     await queueManager.disconnect();
     logger.info('Shutdown complete');
     process.exit(0);

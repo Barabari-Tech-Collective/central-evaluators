@@ -1,4 +1,4 @@
-import { cloneRepo } from "./repoService.js";
+import { cloneRepo, deleteRepo } from "./repoService.js";
 import runTests from "./playwrightService.js";
 import scoreSubmission from "./scoringService.js";
 
@@ -9,12 +9,16 @@ export async function evaluateReactProject(
   const repoPath =
     await cloneRepo(payload.repoUrl);
 
-  const testResults =
-    await runTests(repoPath);
+  try {
+    const testResults =
+      await runTests(repoPath);
 
-  return await scoreSubmission(
-    testResults,
-    payload.rubric,
-    repoPath
-  );
+    return await scoreSubmission(
+      testResults,
+      payload.rubric,
+      repoPath
+    );
+  } finally {
+    await deleteRepo(repoPath);
+  }
 }
